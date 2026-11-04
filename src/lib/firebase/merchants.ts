@@ -1,5 +1,11 @@
 import type { User } from "firebase/auth";
-import { doc, runTransaction, serverTimestamp, type Firestore, type Timestamp } from "firebase/firestore";
+import {
+  doc,
+  runTransaction,
+  serverTimestamp,
+  type Firestore,
+  type Timestamp,
+} from "firebase/firestore";
 
 export interface Merchant {
   ownerUid: string;
@@ -26,7 +32,8 @@ export async function ensureMerchantProfile(db: Firestore, user: User) {
     const merchant = await transaction.get(merchantRef);
     const profile = await transaction.get(userRef);
     if (merchant.exists() && profile.exists()) return;
-    if (merchant.exists() || profile.exists()) throw new Error("Your workspace records need administrator attention. No changes were made.");
+    if (merchant.exists() || profile.exists())
+      throw new Error("Your workspace records need administrator attention. No changes were made.");
     transaction.set(merchantRef, {
       ownerUid: user.uid,
       name: user.displayName ? `${user.displayName}'s workspace` : "My workspace",

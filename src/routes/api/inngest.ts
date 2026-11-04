@@ -7,11 +7,18 @@ import { serve } from "inngest/edge";
  * key and force cloud mode so dev-mode (unsigned) handling can never apply.
  */
 async function handle(request: Request) {
-  if (!process.env["INNGEST_SIGNING_KEY"]) return new Response("Workflow endpoint is not configured.", { status: 503 });
+  if (!process.env["INNGEST_SIGNING_KEY"])
+    return new Response("Workflow endpoint is not configured.", { status: 503 });
   const { inngest, functions } = await import("@/lib/notify/workflows.server");
   return serve({ client: inngest, functions })(request);
 }
 
 export const Route = createFileRoute("/api/inngest")({
-  server: { handlers: { GET: ({ request }) => handle(request), POST: ({ request }) => handle(request), PUT: ({ request }) => handle(request) } },
+  server: {
+    handlers: {
+      GET: ({ request }) => handle(request),
+      POST: ({ request }) => handle(request),
+      PUT: ({ request }) => handle(request),
+    },
+  },
 });

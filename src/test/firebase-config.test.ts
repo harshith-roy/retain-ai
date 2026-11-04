@@ -13,15 +13,37 @@ describe("Firebase configuration", () => {
     });
   });
   it("does not initialize with only the project ID", () => {
-    expect(validateFirebaseConfig({ projectId: "fir-4700f" })).toBe("Missing Firebase web settings: apiKey, authDomain, appId.");
+    expect(validateFirebaseConfig({ projectId: "fir-4700f" })).toBe(
+      "Missing Firebase web settings: apiKey, authDomain, appId.",
+    );
   });
   it("requires the user's fir-4700f project", () => {
-    expect(validateFirebaseConfig({ apiKey: "public-test-key", authDomain: "example.test", appId: "test-app", projectId: "another-project" })).toBe("Firebase project must be fir-4700f.");
+    expect(
+      validateFirebaseConfig({
+        apiKey: "public-test-key",
+        authDomain: "example.test",
+        appId: "test-app",
+        projectId: "another-project",
+      }),
+    ).toBe("Firebase project must be fir-4700f.");
   });
   it("accepts complete web configuration for the requested project", () => {
-    expect(validateFirebaseConfig({ apiKey: "public-test-key", authDomain: "example.test", appId: "test-app", projectId: "fir-4700f" })).toBeNull();
+    expect(
+      validateFirebaseConfig({
+        apiKey: "public-test-key",
+        authDomain: "example.test",
+        appId: "test-app",
+        projectId: "fir-4700f",
+      }),
+    ).toBeNull();
   });
   it("rejects paths in merchant IDs before constructing collections", () => {
-    expect(() => merchantCollection({} as Parameters<typeof merchantCollection>[0], "merchant/another", "customers")).toThrow("Invalid merchant ID.");
+    expect(() =>
+      merchantCollection(
+        {} as Parameters<typeof merchantCollection>[0],
+        "merchant/another",
+        "customers",
+      ),
+    ).toThrow("Invalid merchant ID.");
   });
 });

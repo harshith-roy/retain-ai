@@ -1,14 +1,3 @@
-<!-- LOVABLE:BEGIN -->
-> [!IMPORTANT]
-> This project is connected to [Lovable](https://lovable.dev). Avoid rewriting
-> published git history — force pushing, or rebasing/amending/squashing commits
-> that are already pushed — as it rewrites history on Lovable's side and the
-> user will likely lose their project history.
->
-> Commits you push to the connected branch sync back to Lovable and show up in
-> the editor, so keep the branch in a working state.
-<!-- LOVABLE:END -->
-
 ## Architecture
 - Initialize Firebase lazily from browser effects or event handlers; SSR must not initialize browser persistence or auth listeners.
 - Use one external Firebase auth store and a client-only pathless route guard; the dashboard must never render before auth and merchant provisioning succeed. Google login is popup-only to avoid redirect storage failures; initialization still completes pending legacy redirects before workspace checks.
@@ -27,4 +16,4 @@
 - Portal checkout eligibility uses pure `canStartCheckout` in `src/lib/paypal/journey.ts` after status loading; existing active, paused, pending, or unknown subscriptions must not show duplicate checkout.
 - Outbound notifications (Slack, Resend, PostHog, Inngest, ElevenLabs) live in `src/lib/notify/notify.server.ts` and are best-effort: they never block or change retention/PayPal outcomes; emails fire only on PayPal-verified results.
 - Durable workflows are Inngest functions in `src/lib/notify/workflows.server.ts`, served at `/api/inngest` (SDK verifies INNGEST_SIGNING_KEY).
-- Hosting target is chosen in `vite.config.ts`: Vercel builds (VERCEL env set) pin the Nitro `vercel` preset; Lovable builds keep the Cloudflare-compatible default, so server code must stay runtime-neutral.
+- Hosting uses the Nitro Vite plugin. Vercel deployments are automatically detected; keep server code runtime-neutral.

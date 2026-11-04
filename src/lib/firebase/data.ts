@@ -1,4 +1,11 @@
-import { collection, doc, onSnapshot, type DocumentData, type Firestore, type QueryDocumentSnapshot } from "firebase/firestore";
+import {
+  collection,
+  doc,
+  onSnapshot,
+  type DocumentData,
+  type Firestore,
+  type QueryDocumentSnapshot,
+} from "firebase/firestore";
 
 export type MerchantCollection = "customers" | "subscriptions" | "retentionSessions" | "approvals";
 
@@ -16,9 +23,22 @@ export function listenToMerchantData(
   onData: (rows: QueryDocumentSnapshot<DocumentData>[]) => void,
   onError: (error: Error) => void,
 ) {
-  return onSnapshot(merchantCollection(db, merchantId, name), (snapshot) => onData(snapshot.docs), onError);
+  return onSnapshot(
+    merchantCollection(db, merchantId, name),
+    (snapshot) => onData(snapshot.docs),
+    onError,
+  );
 }
 
-export function listenToMerchant(db: Firestore, merchantId: string, onData: (data: DocumentData | undefined) => void, onError: (error: Error) => void) {
-  return onSnapshot(doc(db, "merchants", merchantId), (snapshot) => onData(snapshot.data()), onError);
+export function listenToMerchant(
+  db: Firestore,
+  merchantId: string,
+  onData: (data: DocumentData | undefined) => void,
+  onError: (error: Error) => void,
+) {
+  return onSnapshot(
+    doc(db, "merchants", merchantId),
+    (snapshot) => onData(snapshot.data()),
+    onError,
+  );
 }

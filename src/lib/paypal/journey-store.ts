@@ -22,11 +22,22 @@ export function useJourney(uid: string | undefined) {
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    const u = authStore.getSnapshot().user; if (!u) return;
+    const u = authStore.getSnapshot().user;
+    if (!u) return;
     try {
       const r = await fetchJourney({ data: { idToken: await u.getIdToken() } });
-      if (r.ok) { setJ(r.journey); setState("ready"); setError(null); } else { setState("error"); setError(r.error); }
-    } catch (e) { setState("error"); setError(e instanceof Error ? e.message : "Journey could not be loaded."); }
+      if (r.ok) {
+        setJ(r.journey);
+        setState("ready");
+        setError(null);
+      } else {
+        setState("error");
+        setError(r.error);
+      }
+    } catch (e) {
+      setState("error");
+      setError(e instanceof Error ? e.message : "Journey could not be loaded.");
+    }
   }, [fetchJourney]);
 
   useEffect(() => {
@@ -39,18 +50,30 @@ export function useJourney(uid: string | undefined) {
           const old = JSON.parse(raw) as { audit?: { at: string; kind: string; detail: string }[] };
           const u = authStore.getSnapshot().user;
           if (u && old.audit?.length) {
-            const r = await importHistory({ data: { idToken: await u.getIdToken(), entries: old.audit.slice(0, 100).map((a) => ({ at: a.at, kind: a.kind, detail: a.detail })) } });
+            const r = await importHistory({
+              data: {
+                idToken: await u.getIdToken(),
+                entries: old.audit
+                  .slice(0, 100)
+                  .map((a) => ({ at: a.at, kind: a.kind, detail: a.detail })),
+              },
+            });
             if (r.ok) localStorage.setItem(`${legacyKey(uid)}.imported`, raw);
             if (r.ok) localStorage.removeItem(legacyKey(uid));
           }
-        } catch { /* keep the browser copy; retry next visit */ }
+        } catch {
+          /* keep the browser copy; retry next visit */
+        }
       }
       await load();
     })();
     const on = () => void load();
     window.addEventListener(EVT, on);
     const t = window.setInterval(on, 20000);
-    return () => { window.removeEventListener(EVT, on); window.clearInterval(t); };
+    return () => {
+      window.removeEventListener(EVT, on);
+      window.clearInterval(t);
+    };
   }, [uid, load, importHistory]);
 
   return { journey: j, state, error, reload: load };

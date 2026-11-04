@@ -8,6 +8,13 @@ export const Route = createFileRoute("/_authenticated")({
     await authStore.initialize();
     if (authStore.getSnapshot().status !== "ready") throw redirect({ to: "/" });
   },
-  pendingComponent: () => <div className="grid min-h-screen place-items-center"><LoaderCircle className="size-6 animate-spin text-muted-foreground" aria-label="Opening workspace" /></div>,
+  pendingComponent: () => (
+    <div className="grid min-h-screen place-items-center">
+      <LoaderCircle
+        className="size-6 animate-spin text-muted-foreground"
+        aria-label="Opening workspace"
+      />
+    </div>
+  ),
   component: () => <Outlet />,
 });

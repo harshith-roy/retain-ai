@@ -15,10 +15,19 @@ export async function requireWorkspace(idToken: string) {
 
 export class RateLimitError extends Error {}
 
-export async function enforceRateLimit(action: RateAction, uid: string, merchantId: string, now = new Date()) {
+export async function enforceRateLimit(
+  action: RateAction,
+  uid: string,
+  merchantId: string,
+  now = new Date(),
+) {
   const buckets = rateBuckets(action, uid, merchantId, now);
   const { increment } = await import("@/lib/firebase/admin.server");
-  const counts = await increment(buckets.map((b) => `rateLimits/${b.key}`), "count", { action, updatedAt: now.toISOString() });
+  const counts = await increment(
+    buckets.map((b) => `rateLimits/${b.key}`),
+    "count",
+    { action, updatedAt: now.toISOString() },
+  );
   if (overLimit(buckets.map((b, i) => ({ max: b.max, count: counts[i] ?? Infinity })))) {
     throw new RateLimitError("Usage limit reached for this hour. Please try again later.");
   }
