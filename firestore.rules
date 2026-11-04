@@ -1,0 +1,46 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() { return request.auth != null; }
+    function self(uid) { return signedIn() && request.auth.uid == uid; }
+    function member(merchantId) {
+      return signedIn()
+        && exists(/databases/$(database)/documents/merchantUsers/$(request.auth.uid))
+        && get(/databases/$(database)/documents/merchantUsers/$(request.auth.uid)).data.merchantId == merchantId;
+    }
+    match /merchants/{merchantId} {
+      // Self get also permits the initial transaction to read a missing document.
+      allow get: if self(merchantId) || member(merchantId);
+      allow list: if false;
+      // Workspaces are created only by the server (invitation / allow-list check).
+      allow create: if false;
+      allow update: if member(merchantId) && resource.data.ownerUid == request.auth.uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name'])
+        && request.resource.data.name is string
+        && request.resource.data.name.size() > 0
+        && request.resource.data.name.size() <= 200;
+      allow delete: if false;
+
+      match /{collectionName}/{documentId} {
+        allow read: if collectionName in ['customers', 'subscriptions', 'retentionSessions', 'approvals'] && member(merchantId);
+        // Trusted backend only: never allow a merchant to manufacture financial
+        // data, retention outcomes, or approvals from the browser.
+        allow write: if false;
+      }
+    }
+    match /merchantUsers/{uid} {
+      allow get: if self(uid);
+      allow list: if false;
+      // Membership is granted only by the server; clients can never join or create a workspace.
+      allow create: if false;
+      allow update: if self(uid)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['displayName', 'photoURL'])
+        && request.resource.data.displayName is string
+        && request.resource.data.displayName.size() <= 200
+        && request.resource.data.photoURL is string
+        && request.resource.data.photoURL.size() <= 2048;
+      allow delete: if false;
+    }
+    match /{document=**} { allow read, write: if false; }
+  }
+}

@@ -1,0 +1,30 @@
+<!-- LOVABLE:BEGIN -->
+> [!IMPORTANT]
+> This project is connected to [Lovable](https://lovable.dev). Avoid rewriting
+> published git history — force pushing, or rebasing/amending/squashing commits
+> that are already pushed — as it rewrites history on Lovable's side and the
+> user will likely lose their project history.
+>
+> Commits you push to the connected branch sync back to Lovable and show up in
+> the editor, so keep the branch in a working state.
+<!-- LOVABLE:END -->
+
+## Architecture
+- Initialize Firebase lazily from browser effects or event handlers; SSR must not initialize browser persistence or auth listeners.
+- Use one external Firebase auth store and a client-only pathless route guard; the dashboard must never render before auth and merchant provisioning succeed. Google login is popup-only to avoid redirect storage failures; initialization still completes pending legacy redirects before workspace checks.
+- Workspace access is decided server-side by `provisionWorkspace` using pure `src/lib/security/access.ts` (existing member, pending invite, or MERCHANT_SIGNUP_ALLOWLIST); firestore.rules.proposed removes client self-provisioning and must be published manually.
+- Approvals require an owner/approver role and are never decidable by the session's own customer; AI and voice endpoints require a linked workspace and per-user/per-workspace hourly limits (`guard.server.ts`, counters in top-level `rateLimits`).
+- Keep merchant data under merchants/{merchantId}; browsers only read it. Trusted writes go through `src/lib/firebase/admin.server.ts` (service-account Firestore REST, bypasses Rules), so every caller verifies the ID token and resolves the merchant from merchantUsers/{uid} via `records.server.ts`.
+- Server-only records (journeys, settings, idempotency claims) live in sub-collections the Rules never expose; dashboard-visible records use the four readable collections.
+- Every mutating action claims an idempotency document (create-if-absent) before side effects, and stores its result for replays.
+- `functions/` holds optional, undeployed Cloud Functions mirroring server logic; the app does not depend on them.
+- Firebase rules are deployment artifacts, not proof of production protection; document and test them separately before any deployment claim.
+- Dashboard pages live under the `_authenticated.dashboard` layout and read data only through `WorkspaceProvider`, so live Firestore data and labelled demo data share one code path.
+- Dashboard metrics and demo data are pure functions in `src/lib/dashboard/model.ts`; estimated revenue must never be presented as PayPal-verified.
+- Integration status on the Integrations page is hand-maintained and only marks a service operational after end-to-end verification.
+- AI retention offers are untrusted proposals: server functions in `src/lib/retention/retention.functions.ts` verify the Firebase ID token, call Firecrawl/Groq server-side, and always pass output through pure `enforcePolicy` in `guardrails.ts` before returning it.
+- PayPal Sandbox operations run only in `src/lib/paypal/paypal.functions.ts`; pure `authorizeOperation` decides, offers must carry a server HMAC token, and every change is re-read from PayPal before it is reported as verified.
+- Portal checkout eligibility uses pure `canStartCheckout` in `src/lib/paypal/journey.ts` after status loading; existing active, paused, pending, or unknown subscriptions must not show duplicate checkout.
+- Outbound notifications (Slack, Resend, PostHog, Inngest, ElevenLabs) live in `src/lib/notify/notify.server.ts` and are best-effort: they never block or change retention/PayPal outcomes; emails fire only on PayPal-verified results.
+- Durable workflows are Inngest functions in `src/lib/notify/workflows.server.ts`, served at `/api/inngest` (SDK verifies INNGEST_SIGNING_KEY).
+- Hosting target is chosen in `vite.config.ts`: Vercel builds (VERCEL env set) pin the Nitro `vercel` preset; Lovable builds keep the Cloudflare-compatible default, so server code must stay runtime-neutral.
