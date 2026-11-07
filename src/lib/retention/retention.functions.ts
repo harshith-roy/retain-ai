@@ -128,7 +128,6 @@ export const generateRetentionOffer = createServerFn({ method: "POST" })
           };
         const ctx = {
           offersSoFar: data.previousOffers.length,
-          customerAnnualValue: data.subscription.monthlyPrice * 12,
         };
         const policy = PolicySchema.safeParse(data.policy);
         let decision: Decision;
@@ -141,7 +140,6 @@ export const generateRetentionOffer = createServerFn({ method: "POST" })
                 message: "I understand. Thanks for giving us a chance to help.",
                 offer: null,
                 rationale: "",
-                requiresHumanApproval: false,
               },
               ctx,
             );
@@ -190,7 +188,7 @@ async function decide(
   offersSoFar: number,
   monthlyPrice: number,
 ): Promise<Decision> {
-  const ctx = { offersSoFar, customerAnnualValue: monthlyPrice * 12 };
+  const ctx = { offersSoFar };
   const policy = PolicySchema.safeParse(policyInput);
   if (!policy.success) return enforcePolicy(policyInput, null, ctx);
   if (offersSoFar >= policy.data.maxOffers)
@@ -200,7 +198,6 @@ async function decide(
         message: "I understand. Thanks for giving us a chance to help.",
         offer: null,
         rationale: "",
-        requiresHumanApproval: false,
       },
       ctx,
     );
@@ -246,7 +243,8 @@ async function persistedOffer(
       duplicate: true,
     };
   const settings = await r.readSettings(merchantId);
-  const policy = settings?.["policy"] ?? DEFAULT_POLICY;
+  const storedPolicy = PolicySchema.safeParse(settings?.["policy"]);
+  const policy = storedPolicy.success ? storedPolicy.data : DEFAULT_POLICY;
   const saved = BrandProfileSchema.safeParse(settings?.["profile"]);
   const profile =
     settings?.["profileApproved"] === true && saved.success ? saved.data : data.profile;
@@ -276,14 +274,13 @@ async function persistedOffer(
         duplicate: true,
       };
   }
-  await afterOffer(merchantId, who.name, data.requestId, data.reason, decision);
+  await afterOffer(merchantId, data.requestId, data.reason, decision);
   return { ok: true, decision, decisionToken, duplicate: !stored };
 }
 
-/** Best-effort analytics + approval workflow; never changes the stored decision. */
+/** Best-effort analytics; never changes the stored decision. */
 async function afterOffer(
   merchantId: string,
-  customerName: string,
   requestId: string,
   reason: string,
   decision: Decision,
@@ -297,24 +294,4 @@ async function afterOffer(
     discountPct: decision.offer?.discountPct ?? 0,
     violations: decision.violations.length,
   });
-  if (decision.status !== "needs_approval") return;
-  const { getRequest } = await import("@tanstack/react-start/server");
-  const payload = {
-    merchantId,
-    approvalId: requestId,
-    customerName,
-    offerTitle: decision.offer?.title ?? "Offer",
-    reason: decision.rationale,
-    amount: decision.offer
-      ? Math.round(DEVPILOT.monthlyPrice * (100 - decision.offer.discountPct)) / 100
-      : 0,
-    reviewUrl: `${new URL(getRequest().url).origin}/dashboard/escalations`,
-  };
-  const sent = await n.sendEvent("retain/approval.requested", payload, `approval-${requestId}`);
-  // If the durable workflow can't be reached, still alert the merchant directly.
-  if (!sent.ok)
-    await n.slackPost(
-      `Retention offer needs approval: ${payload.offerTitle} for ${customerName}`,
-      n.approvalBlocks(payload),
-    );
 }

@@ -26,8 +26,8 @@ describe("DevPilot checkout eligibility", () => {
     expect(canStartCheckout(false, null, false)).toBe(false);
     expect(canStartCheckout(true, "CANCELLED", false)).toBe(false);
   });
-  it("offers DevPilot AI Pro Monthly at 29 USD per month", () => {
-    expect(DEVPILOT.monthlyPrice).toBe(29);
+  it("offers DevPilot AI Pro Monthly at 50 USD per month", () => {
+    expect(DEVPILOT.monthlyPrice).toBe(50);
     expect(DEVPILOT.currency).toBe("USD");
   });
 });

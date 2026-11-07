@@ -20,6 +20,7 @@ import { StatusPill, label } from "@/components/dashboard/ui";
 import { authStore } from "@/lib/firebase/auth";
 import { generateRetentionOffer } from "@/lib/retention/retention.functions";
 import {
+  confirmSubscriptionRevision,
   fetchSubscription,
   recordCustomerDecision,
   startSandboxSubscription,
@@ -63,7 +64,7 @@ const DEVPILOT_PROFILE: BrandProfile = {
   website: "https://devpilot.example.com",
   description:
     "DevPilot AI (fictional) is an AI coding assistant that helps developers write, review and refactor code faster.",
-  products: ["DevPilot AI Pro Monthly — $29/month"],
+  products: [`DevPilot AI Pro Monthly — $${DEVPILOT.monthlyPrice}/month`],
   audience: "Professional and indie software developers",
   tone: "Friendly, direct, developer-to-developer",
   publicFacts: ["Fictional demonstration merchant for the RETAIN.AI hackathon demo"],
@@ -99,12 +100,15 @@ function Portal() {
   const startSub = useServerFn(startSandboxSubscription);
   const genOffer = useServerFn(generateRetentionOffer);
   const decide = useServerFn(recordCustomerDecision);
+  const confirmRevision = useServerFn(confirmSubscriptionRevision);
   const [sub, setSub] = useState<SubscriptionDTO | null>(null);
   const [subError, setSubError] = useState<string | null>(null);
   const [loadingSub, setLoadingSub] = useState(false);
   const [step, setStep] = useState<"view" | "reason" | "offer">("view");
   const [reason, setReason] = useState<CancellationReason>("too_expensive");
-  const [detail, setDetail] = useState("I'm cancelling because $29/month is too expensive for me.");
+  const [detail, setDetail] = useState(
+    `I'm cancelling because $${DEVPILOT.monthlyPrice}/month is too expensive for me.`,
+  );
   const [busy, setBusy] = useState<string | null>(null);
   const lock = useRef(false);
 
@@ -146,6 +150,29 @@ function Portal() {
         if (!r.ok) toast.error(r.error);
         await reload();
         void refresh(returned);
+      } else if (params.get("paypal") === "revised") {
+        window.history.replaceState({}, "", "/portal/devpilot");
+        const sid = params.get("subscription_id") ?? params.get("sub") ?? j.subscriptionId;
+        const sessionId = params.get("session_id");
+        if (sid) {
+          const r = await confirmRevision({
+            data: {
+              idToken: await idToken(),
+              subscriptionId: sid,
+              offerRequestId: sessionId || null,
+            },
+          });
+          if (!r.ok) toast.error(r.error);
+          else if (r.verified) toast.success(r.reason);
+          else toast(r.reason);
+          await reload();
+          await refresh(sid);
+        }
+      } else if (params.get("paypal") === "revision_cancelled") {
+        window.history.replaceState({}, "", "/portal/devpilot");
+        toast("No price change was made — your subscription stays as it is.");
+        await reload();
+        if (j.subscriptionId) void refresh(j.subscriptionId);
       } else if (params.get("paypal") === "cancelled") {
         window.history.replaceState({}, "", "/portal/devpilot");
         await logCancelled({ data: { idToken: await idToken() } });
@@ -240,7 +267,15 @@ function Portal() {
           offerRequestId: cur.currentSessionId,
         },
       });
-      if (!r.ok) toast.error(r.error);
+      if (!r.ok) {
+        toast.error(r.error);
+        return;
+      }
+      // A price revision can require the customer's consent on PayPal.
+      if (r.approveUrl) {
+        window.location.href = r.approveUrl;
+        return;
+      }
       await reload();
       if (cur.subscriptionId) await refresh(cur.subscriptionId);
       if (action === "decline_offer") setStep("reason");
@@ -288,6 +323,43 @@ function Portal() {
           You're viewing the <b>customer</b> side of the demo. Billing runs in PayPal <b>Sandbox</b>{" "}
           — no real money moves. Journey history is saved to the merchant's workspace.
         </div>
+
+        {showCheckout && step === "view" && (
+          <section className="rounded-2xl border-2 border-cyan/40 bg-cyan/5 p-6">
+            <p className="text-xs font-semibold uppercase tracking-widest text-cyan">
+              Start here · about 1 minute
+            </p>
+            <h2 className="mt-2 text-xl font-semibold">
+              {j.subscriptionId
+                ? "Start a fresh Sandbox subscription"
+                : "Connect a Sandbox subscription"}
+            </h2>
+            <p className="mt-2 max-w-xl text-sm text-muted-foreground">
+              Create the baseline DevPilot AI Pro subscription, then come back and cancel it to
+              trigger the AI retention offer.
+            </p>
+            <ol className="mt-4 grid gap-2 text-sm sm:grid-cols-2">
+              <li className="rounded-lg border bg-background/60 px-3 py-2">
+                <span className="font-medium">Step 1</span> ·{" "}
+                {`Subscribe for $${DEVPILOT.monthlyPrice}/month`}
+              </li>
+              <li className="rounded-lg border bg-background/60 px-3 py-2">
+                <span className="font-medium">Step 2</span> · Click “Cancel subscription”
+              </li>
+            </ol>
+            <p className="mt-3 text-xs text-muted-foreground">
+              No real money moves. PayPal Sandbox approval takes a few clicks.
+            </p>
+            <Button size="lg" className="mt-4 w-full sm:w-auto" onClick={connect} disabled={!!busy}>
+              {busy === "connect" ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <ExternalLink className="size-4" />
+              )}
+              Start Sandbox Subscription — ${DEVPILOT.monthlyPrice}/mo
+            </Button>
+          </section>
+        )}
 
         <section className="rounded-2xl border bg-card p-5">
           <div className="flex flex-wrap items-start justify-between gap-3">
@@ -364,24 +436,6 @@ function Portal() {
             <span className="font-medium">PayPal</span>
             <StatusPill tone="muted">Sandbox</StatusPill>
           </div>
-          {showCheckout && (
-            <div className="mt-3 space-y-3">
-              <p className="text-sm text-muted-foreground">
-                {j.subscriptionId
-                  ? "Start a new subscription for $29/month USD."
-                  : "DevPilot AI Pro · $29/month USD."}{" "}
-                No real money moves in PayPal Sandbox.
-              </p>
-              <Button onClick={connect} disabled={!!busy}>
-                {busy === "connect" ? (
-                  <Loader2 className="size-4 animate-spin" />
-                ) : (
-                  <ExternalLink className="size-4" />
-                )}
-                Subscribe with PayPal
-              </Button>
-            </div>
-          )}
           {subError && (
             <p className="mt-3 flex items-center gap-1 text-sm text-destructive">
               <CircleAlert className="size-4" />
@@ -389,9 +443,15 @@ function Portal() {
             </p>
           )}
           {status === "ACTIVE" && step === "view" && (
-            <Button variant="outline" className="mt-4" onClick={() => setStep("reason")}>
-              Cancel subscription
-            </Button>
+            <div className="mt-4 rounded-xl border border-dashed border-violet/40 bg-violet/5 p-4">
+              <p className="text-sm font-semibold">Step 2 — Try cancelling</p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Tell us why you want to leave and the AI will respond with a retention offer.
+              </p>
+              <Button size="lg" className="mt-3" onClick={() => setStep("reason")}>
+                Cancel subscription
+              </Button>
+            </div>
           )}
           {status === "SUSPENDED" && (
             <Button
@@ -482,11 +542,16 @@ function Portal() {
                   {d.offer.discountPct ? ` · ${d.offer.discountPct}% off` : ""} ·{" "}
                   {d.offer.durationMonths} month(s)
                 </p>
-                {d.offer.type !== "pause" && (
+                {d.offer.type === "discount" && (
                   <p className="mt-2 text-xs text-muted-foreground">
-                    Accepting records your choice. PayPal can't add this to an existing subscription
-                    automatically, so DevPilot will follow up — your billing doesn't change until
-                    then.
+                    Accepting applies this price to your PayPal subscription. PayPal may ask you to
+                    approve the new price before it starts.
+                  </p>
+                )}
+                {(d.offer.type === "downgrade" || d.offer.type === "skip_month") && (
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    Accepting records your choice. DevPilot will follow up — your billing doesn't
+                    change until then.
                   </p>
                 )}
               </div>

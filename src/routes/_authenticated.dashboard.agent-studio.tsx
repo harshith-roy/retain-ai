@@ -6,7 +6,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Slider } from "@/components/ui/slider";
-import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
@@ -159,27 +158,6 @@ function AgentStudio() {
               min={1}
               onChange={(v) => set("maxOffers", v)}
             />
-            <SliderField
-              label="Escalate when customer value exceeds"
-              value={cfg.escalateAbove}
-              prefix="$"
-              max={1000}
-              step={50}
-              onChange={(v) => set("escalateAbove", v)}
-            />
-            <div className="flex items-center justify-between gap-4 rounded-lg border p-3">
-              <div>
-                <Label htmlFor="approval">Require human approval</Label>
-                <p className="text-xs text-muted-foreground">
-                  Any offer above the discount limit waits for you in the Escalation Center.
-                </p>
-              </div>
-              <Switch
-                id="approval"
-                checked={cfg.requireApproval}
-                onCheckedChange={(v) => set("requireApproval", v)}
-              />
-            </div>
           </div>
         </Panel>
       </div>

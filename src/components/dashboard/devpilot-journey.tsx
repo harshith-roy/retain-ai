@@ -31,9 +31,9 @@ export function DevpilotJourneyPanel({
     <Panel
       className="mb-4"
       title="DevPilot AI demo journey"
-      description="Fictional merchant · Pro Monthly · $29/month · PayPal Sandbox"
+      description={`Fictional merchant · Pro Monthly · $${DEVPILOT.monthlyPrice}/month · PayPal Sandbox`}
       action={
-        <Button asChild size="sm" variant="outline">
+        <Button asChild size="sm">
           <Link to="/portal/devpilot">
             <ExternalLink className="size-4" />
             Open customer portal

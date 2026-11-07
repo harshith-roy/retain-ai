@@ -57,6 +57,14 @@ async function call<T>(
   return { status: res.status, data: text ? (JSON.parse(text) as T) : null };
 }
 
+interface RawBillingCycle {
+  sequence: number;
+  tenure_type: "TRIAL" | "REGULAR";
+  frequency?: { interval_unit: string; interval_count: number };
+  pricing_scheme?: { fixed_price?: { value: string; currency_code: string } };
+  total_cycles?: number;
+}
+
 interface RawSub {
   id: string;
   status: string;
@@ -64,9 +72,12 @@ interface RawSub {
   custom_id?: string;
   status_update_time?: string;
   start_time?: string;
+  plan_overridden?: boolean;
+  plan?: { billing_cycles?: RawBillingCycle[] };
   billing_info?: {
     next_billing_time?: string;
     last_payment?: { amount?: { value: string; currency_code: string }; time?: string };
+    cycle_executions?: { sequence: number; cycle_stage: string; cycles_completed: number }[];
   };
   links?: { href: string; rel: string }[];
 }
@@ -102,6 +113,24 @@ export async function getPlanPrice(planId: string) {
   const p = data?.billing_cycles?.find((c) => c.tenure_type === "REGULAR")?.pricing_scheme
     .fixed_price;
   return p ? { amount: Number(p.value), currency: p.currency_code } : null;
+}
+
+async function getPlanRegularCycle(planId: string) {
+  const { data } = await call<{ id: string; billing_cycles?: RawBillingCycle[] }>(
+    "GET",
+    `/v1/billing/plans/${planId}`,
+  );
+  const regular = data?.billing_cycles?.find((c) => c.tenure_type === "REGULAR");
+  if (!regular?.frequency || !regular.pricing_scheme?.fixed_price)
+    throw new PaypalError(
+      `The PayPal plan ${planId} has no regular billing cycle to revise from.`,
+      502,
+      "",
+    );
+  return regular as RawBillingCycle & {
+    frequency: { interval_unit: string; interval_count: number };
+    pricing_scheme: { fixed_price: { value: string; currency_code: string } };
+  };
 }
 
 export async function getSubscription(
@@ -160,4 +189,101 @@ export async function runOperation(
     requestId,
     body: { reason: reason.slice(0, 120) },
   });
+}
+
+export interface RevisionOptions {
+  requestId?: string;
+  returnUrl?: string;
+  cancelUrl?: string;
+}
+
+export interface RevisionResult {
+  /** HTTP status from PayPal: 200 applied immediately, 202 awaiting customer approval. */
+  status: number;
+  /** HATEOAS `approve` link, present when PayPal needs the customer to consent. */
+  approveUrl: string | null;
+  /** Absolute discounted price written into the override, e.g. "40.00". */
+  price: string;
+  currency: string;
+  originalPrice: string;
+  durationMonths: number;
+  effectiveAt: string | null;
+}
+
+/**
+ * Revise an existing subscription by overriding its billing cycles, so no new
+ * PayPal plan has to be created at runtime. PayPal allows only one REGULAR
+ * cycle, so the discounted period is a finite TRIAL cycle (sequence 1) and the
+ * original price resumes as the infinite REGULAR cycle (sequence 2).
+ */
+export async function reviseSubscription(
+  id: string,
+  newPrice: string,
+  durationMonths: number,
+  opts: RevisionOptions = {},
+): Promise<RevisionResult> {
+  if (!isSubscriptionId(id))
+    throw new PaypalError("That is not a PayPal subscription ID.", 400, "");
+  const sub = await getSubscription(id);
+  if (!sub) throw new PaypalError("PayPal has no subscription with that ID.", 404, "");
+
+  const regular = await getPlanRegularCycle(sub.planId);
+  const { currency_code: currency, value: originalPrice } = regular.pricing_scheme.fixed_price;
+
+  const price = Number(newPrice);
+  if (!Number.isFinite(price) || price <= 0)
+    throw new PaypalError("The revised price must be a positive amount.", 400, "");
+  if (price >= Number(originalPrice))
+    throw new PaypalError("The revised price must be lower than the current price.", 400, "");
+
+  const months = Math.max(1, Math.min(12, Math.trunc(durationMonths)));
+  const value = price.toFixed(2);
+
+  const { status, data } = await call<RawSub>("POST", `/v1/billing/subscriptions/${id}/revise`, {
+    ...(opts.requestId ? { requestId: opts.requestId } : {}),
+    body: {
+      plan_id: sub.planId,
+      plan: {
+        billing_cycles: [
+          {
+            sequence: 1,
+            tenure_type: "TRIAL",
+            frequency: regular.frequency,
+            pricing_scheme: { fixed_price: { value, currency_code: currency } },
+            total_cycles: months,
+          },
+          {
+            sequence: 2,
+            tenure_type: "REGULAR",
+            frequency: regular.frequency,
+            pricing_scheme: {
+              fixed_price: { value: originalPrice, currency_code: currency },
+            },
+            total_cycles: 0,
+          },
+        ],
+      },
+      ...(opts.returnUrl
+        ? {
+            application_context: {
+              brand_name: DEVPILOT.merchantName,
+              user_action: "SUBSCRIBE_NOW",
+              shipping_preference: "NO_SHIPPING",
+              return_url: opts.returnUrl,
+              cancel_url: opts.cancelUrl ?? opts.returnUrl,
+            },
+          }
+        : {}),
+    },
+  });
+
+  return {
+    status,
+    approveUrl: data?.links?.find((l) => l.rel === "approve")?.href ?? null,
+    price: value,
+    currency,
+    originalPrice,
+    durationMonths: months,
+    effectiveAt: data?.billing_info?.next_billing_time ?? null,
+  };
 }

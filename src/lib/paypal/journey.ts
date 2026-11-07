@@ -5,7 +5,7 @@ export const DEVPILOT = {
   merchantName: "DevPilot AI",
   productName: "DevPilot AI Pro",
   planName: "Pro Monthly",
-  monthlyPrice: 29,
+  monthlyPrice: 50,
   currency: "USD",
   planDisplayName: "DevPilot AI Pro Monthly",
 } as const;
@@ -16,10 +16,14 @@ export function canStartCheckout(hasSubscription: boolean, status: string | null
 }
 
 export type CustomerAction = "accept_offer" | "decline_offer" | "continue_cancellation";
-export type PaypalOperation = "suspend" | "cancel";
+export type PaypalOperation = "suspend" | "cancel" | "revise";
 
 export type Authorization =
-  | { allowed: true; operation: PaypalOperation; expectedStatus: "SUSPENDED" | "CANCELLED" }
+  | {
+      allowed: true;
+      operation: PaypalOperation;
+      expectedStatus: "SUSPENDED" | "CANCELLED" | "ACTIVE";
+    }
   | {
       allowed: false;
       outcome: "no_paypal_change" | "awaiting_approval" | "pending_merchant_action" | "rejected";
@@ -96,13 +100,7 @@ export function authorizeOperation(input: {
       outcome: "rejected",
       reason: "Offer could not be verified as issued by RETAIN.AI.",
     };
-  if (decision.status === "needs_approval")
-    return {
-      allowed: false,
-      outcome: "awaiting_approval",
-      reason: "Offer needs merchant approval before anything changes.",
-    };
-  if (decision.status !== "offer" || !decision.offer)
+  if (!decision.offer)
     return { allowed: false, outcome: "rejected", reason: "There is no approved offer to accept." };
   return offerOperation(decision.offer, subscription.status);
 }
@@ -117,12 +115,94 @@ function offerOperation(offer: Offer, status: string): Authorization {
       };
     return { allowed: true, operation: "suspend", expectedStatus: "SUSPENDED" };
   }
-  // PayPal cannot apply an arbitrary discount, skip or downgrade to an existing
-  // subscription without a plan revision the customer approves on PayPal.
+  if (offer.type === "discount") {
+    if (status !== "ACTIVE")
+      return {
+        allowed: false,
+        outcome: "rejected",
+        reason: `Only active subscriptions can be discounted (status ${status}).`,
+      };
+    if (offer.discountPct <= 0)
+      return {
+        allowed: false,
+        outcome: "rejected",
+        reason: "The discount offer has no discount to apply.",
+      };
+    // Applied by overriding the subscription's billing cycles via /revise.
+    return { allowed: true, operation: "revise", expectedStatus: "ACTIVE" };
+  }
+  // Skip-month and downgrade still need a plan the customer approves on PayPal.
   return {
     allowed: false,
     outcome: "pending_merchant_action",
     reason: `PayPal does not support applying a “${offer.type}” directly to an existing subscription. It needs a plan revision approved by the customer on PayPal.`,
+  };
+}
+
+export interface RevisionSnapshot {
+  status: string;
+  planId: string;
+  raw: {
+    plan_overridden?: boolean;
+    plan?: {
+      billing_cycles?: {
+        sequence: number;
+        tenure_type?: string;
+        total_cycles?: number;
+        pricing_scheme?: { fixed_price?: { value: string; currency_code: string } };
+      }[];
+    };
+  };
+}
+
+/**
+ * Confirm PayPal actually applied the override: the subscription must still be
+ * ACTIVE, on the same plan, and expose the discounted cycle we sent.
+ */
+export function verifyRevision(
+  after: RevisionSnapshot | null,
+  expected: { planId: string; price: string; currency: string; durationMonths: number },
+): { verified: boolean; effectivePrice: number | null; reason: string } {
+  if (!after)
+    return {
+      verified: false,
+      effectivePrice: null,
+      reason: "PayPal subscription could not be re-read after the revision.",
+    };
+  if (after.status !== "ACTIVE")
+    return {
+      verified: false,
+      effectivePrice: null,
+      reason: `PayPal reports status ${after.status}; a revised subscription must stay ACTIVE.`,
+    };
+  if (after.planId !== expected.planId)
+    return {
+      verified: false,
+      effectivePrice: null,
+      reason: "PayPal reports a different plan than the one revised.",
+    };
+  const cycles = after.raw.plan?.billing_cycles ?? [];
+  const discounted = cycles.find((c) => {
+    const fixed = c.pricing_scheme?.fixed_price;
+    return (
+      !!fixed &&
+      fixed.currency_code === expected.currency &&
+      Number(fixed.value) === Number(expected.price) &&
+      (c.total_cycles == null || c.total_cycles === expected.durationMonths)
+    );
+  });
+  if (!discounted)
+    return {
+      verified: false,
+      effectivePrice: null,
+      reason: after.raw.plan_overridden
+        ? "PayPal accepted the revision but did not return the expected discounted cycle."
+        : "PayPal has not applied the revised billing cycle yet.",
+    };
+  return {
+    verified: true,
+    effectivePrice: Number(expected.price),
+    reason: `PayPal confirms ACTIVE at ${expected.currency} ${expected.price}/month for ${expected.durationMonths} month(s), then the original price.`,
   };
 }
 

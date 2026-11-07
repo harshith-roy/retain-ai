@@ -135,7 +135,7 @@ export const authStore = {
               }
               publish({ ...initial, status: "provisioning", user });
               try {
-                // Server decides access (existing member, invitation or allow-list) and links the workspace.
+                // Server links an existing member, joins an invite, or creates a workspace.
                 let membership: { merchantId: string; role: string };
                 try {
                   const r = await provisionWorkspace({

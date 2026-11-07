@@ -8,7 +8,6 @@ import {
   canManageTeam,
   decideSignup,
   normalizeEmail,
-  parseAllowlist,
 } from "@/lib/security/access";
 import { applyApproval, sessionStatusFor, type ActivityEntry, type JourneyView } from "./model";
 
@@ -71,7 +70,9 @@ export const bindSubscription = createServerFn({ method: "POST" })
           ok: false as const,
           error: "This PayPal subscription does not belong to your account.",
         };
-      const price = await pp.getPlanPrice(sub.planId).catch(() => null);
+      const { currentCyclePrice } = await import("@/lib/paypal/subscription-lookup");
+      const price =
+        currentCyclePrice(sub.raw) ?? (await pp.getPlanPrice(sub.planId).catch(() => null));
       const entries: ActivityEntry[] =
         data.event === "refresh"
           ? []
@@ -382,8 +383,8 @@ async function readTeam(m: string): Promise<Record<string, TeamInvite>> {
 }
 
 /**
- * Called after Google sign-in. Existing members always pass; new accounts need
- * a pending invite (joins that workspace) or an allow-listed email (own workspace).
+ * Called after Google sign-in. Existing members keep their workspace, pending
+ * invitations join the inviting workspace, and everyone else gets a new one.
  */
 export const provisionWorkspace = createServerFn({ method: "POST" })
   .inputValidator((d: unknown) => z.object({ idToken: token }).parse(d))
@@ -402,8 +403,6 @@ export const provisionWorkspace = createServerFn({ method: "POST" })
         const inv = ip ? await getDoc(ip) : null;
         const decision = decideSignup({
           existingMember: !!existing,
-          email: who.email,
-          emailVerified: who.emailVerified,
           invite: inv
             ? {
                 merchantId: String(inv["merchantId"] ?? ""),
@@ -412,7 +411,6 @@ export const provisionWorkspace = createServerFn({ method: "POST" })
                 expiresAt: (inv["expiresAt"] as string | null) ?? null,
               }
             : null,
-          allowlist: parseAllowlist(process.env["MERCHANT_SIGNUP_ALLOWLIST"]),
           now: new Date(),
         });
         const now = new Date().toISOString();
@@ -427,7 +425,6 @@ export const provisionWorkspace = createServerFn({ method: "POST" })
           const m = await (await srv()).resolveMerchant(who.uid);
           return { ok: true, ...m };
         }
-        if (decision.kind === "denied") return { ok: false, denied: true, error: decision.error };
         if (decision.kind === "create_owner") {
           if (await getDoc(`merchants/${who.uid}`))
             return {

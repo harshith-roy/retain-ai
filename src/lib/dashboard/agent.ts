@@ -5,8 +5,6 @@ export interface AgentConfig {
   brandVoice: string;
   maxDiscount: number;
   maxOffers: number;
-  escalateAbove: number;
-  requireApproval: boolean;
 }
 
 export const DEFAULT_AGENT: AgentConfig = {
@@ -16,8 +14,6 @@ export const DEFAULT_AGENT: AgentConfig = {
   brandVoice: "",
   maxDiscount: 20,
   maxOffers: 2,
-  escalateAbove: 300,
-  requireApproval: true,
 };
 
 /** Client-side form validation only — never an authorization of financial actions. */

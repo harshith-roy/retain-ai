@@ -4,6 +4,7 @@ import {
   isVerifiedRetained,
   signDecision,
   verifyDecision,
+  verifyRevision,
 } from "@/lib/paypal/journey";
 import type { Decision } from "@/lib/retention/guardrails";
 
@@ -63,7 +64,7 @@ describe("PayPal operation authorization", () => {
       }),
     ).toMatchObject({ allowed: false, outcome: "rejected" });
   });
-  it("does not pretend a discount can be applied to an existing subscription", () => {
+  it("revises the billing cycle for an accepted, verified discount offer", () => {
     expect(
       authorizeOperation({
         ...base,
@@ -71,9 +72,34 @@ describe("PayPal operation authorization", () => {
         decision: offer("discount"),
         subscription: sub(),
       }),
+    ).toEqual({ allowed: true, operation: "revise", expectedStatus: "ACTIVE" });
+  });
+  it("rejects a discount with no discount to apply", () => {
+    const d = offer("discount");
+    d.offer = { ...d.offer!, discountPct: 0 };
+    expect(
+      authorizeOperation({
+        ...base,
+        action: "accept_offer",
+        decision: d,
+        subscription: sub(),
+      }),
+    ).toMatchObject({ allowed: false, outcome: "rejected" });
+  });
+  it("still needs a customer-approved plan for downgrades and skips", () => {
+    expect(
+      authorizeOperation({
+        ...base,
+        action: "accept_offer",
+        decision: {
+          ...offer("discount"),
+          offer: { type: "downgrade", discountPct: 0, durationMonths: 1, title: "t" },
+        } as Decision,
+        subscription: sub(),
+      }),
     ).toMatchObject({ allowed: false, outcome: "pending_merchant_action" });
   });
-  it("holds offers that need merchant approval", () => {
+  it("treats a legacy approval-pending offer as auto-approved", () => {
     expect(
       authorizeOperation({
         ...base,
@@ -81,7 +107,7 @@ describe("PayPal operation authorization", () => {
         decision: offer("pause", "needs_approval"),
         subscription: sub(),
       }),
-    ).toMatchObject({ allowed: false, outcome: "awaiting_approval" });
+    ).toMatchObject({ allowed: true, operation: "suspend" });
   });
   it("rejects unknown, foreign, wrong-plan or non-consented subscriptions", () => {
     expect(
@@ -137,6 +163,46 @@ describe("PayPal operation authorization", () => {
         subscription: sub("SUSPENDED"),
       }).allowed,
     ).toBe(false);
+  });
+});
+
+describe("revision verification", () => {
+  const expected = { planId: PLAN, price: "40.00", currency: "USD", durationMonths: 3 };
+  const snapshot = (status = "ACTIVE", discountedPrice = "40.00") => ({
+    status,
+    planId: PLAN,
+    raw: {
+      plan_overridden: true,
+      plan: {
+        billing_cycles: [
+          {
+            sequence: 1,
+            tenure_type: "TRIAL",
+            total_cycles: 3,
+            pricing_scheme: { fixed_price: { value: discountedPrice, currency_code: "USD" } },
+          },
+          {
+            sequence: 2,
+            tenure_type: "REGULAR",
+            total_cycles: 0,
+            pricing_scheme: { fixed_price: { value: "50.00", currency_code: "USD" } },
+          },
+        ],
+      },
+    },
+  });
+
+  it("accepts an ACTIVE subscription exposing the discounted cycle", () => {
+    const r = verifyRevision(snapshot(), expected);
+    expect(r.verified).toBe(true);
+    expect(r.effectivePrice).toBe(40);
+  });
+  it("rejects a subscription that is no longer ACTIVE", () => {
+    expect(verifyRevision(snapshot("SUSPENDED"), expected).verified).toBe(false);
+  });
+  it("rejects a missing or different discounted cycle", () => {
+    expect(verifyRevision(null, expected).verified).toBe(false);
+    expect(verifyRevision(snapshot("ACTIVE", "45.00"), expected).verified).toBe(false);
   });
 });
 

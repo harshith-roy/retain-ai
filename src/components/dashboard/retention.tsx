@@ -14,10 +14,10 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Switch } from "@/components/ui/switch";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Panel, StatusPill, label } from "@/components/dashboard/ui";
 import { authStore } from "@/lib/firebase/auth";
+import { DEVPILOT } from "@/lib/paypal/journey";
 import { analyzeWebsite, generateRetentionOffer } from "@/lib/retention/retention.functions";
 import { getRetentionSettings, saveRetentionSettings } from "@/lib/records/records.functions";
 import {
@@ -396,16 +396,6 @@ function Policies({
             onChange={(e) => set("maxOffers", num(e.target.value))}
           />
         </div>
-        <div className="space-y-1.5">
-          <Label htmlFor="pesc">Escalate when annual value exceeds ($)</Label>
-          <Input
-            id="pesc"
-            type="number"
-            min={0}
-            value={draft.escalateAboveValue}
-            onChange={(e) => set("escalateAboveValue", num(e.target.value))}
-          />
-        </div>
       </div>
       <div className="mt-4 flex flex-wrap gap-4">
         {ALTERNATIVES.map((a) => (
@@ -425,19 +415,6 @@ function Policies({
           </label>
         ))}
       </div>
-      <div className="mt-4 flex items-center justify-between gap-4 rounded-lg border p-3">
-        <div>
-          <Label htmlFor="papprove">Require human approval for every offer</Label>
-          <p className="text-xs text-muted-foreground">
-            Offers wait for you instead of being shown as available.
-          </p>
-        </div>
-        <Switch
-          id="papprove"
-          checked={draft.requireHumanApproval}
-          onCheckedChange={(v) => set("requireHumanApproval", v)}
-        />
-      </div>
       {!check.success && (
         <p className="mt-3 text-xs text-destructive">
           Invalid policy: discount 0–{HARD_LIMITS.maxDiscountPct}%, 1–{HARD_LIMITS.maxOffers}{" "}
@@ -448,12 +425,10 @@ function Policies({
   );
 }
 
-type SessionStatus =
-  "choosing" | "offered" | "awaiting_approval" | "pending_subscription_action" | "cancelled";
+type SessionStatus = "choosing" | "offered" | "pending_subscription_action" | "cancelled";
 const statusTone = {
   choosing: "muted",
   offered: "cyan",
-  awaiting_approval: "warning",
   pending_subscription_action: "violet",
   cancelled: "muted",
 } as const;
@@ -493,7 +468,11 @@ function SessionTester({
           policy,
           reason,
           reasonDetail: detail,
-          subscription: { planName: "DevPilot AI Pro Monthly", monthlyPrice: 29, monthsActive: 8 },
+          subscription: {
+            planName: "DevPilot AI Pro Monthly",
+            monthlyPrice: DEVPILOT.monthlyPrice,
+            monthsActive: 8,
+          },
           previousOffers: offers.map((o) => ({
             type: o.type,
             discountPct: o.discountPct,
@@ -507,7 +486,7 @@ function SessionTester({
       }
       setDecision(r.decision);
       if (r.decision.offer) setOffers((o) => [...o, r.decision.offer as Offer]);
-      setStatus(r.decision.status === "needs_approval" ? "awaiting_approval" : "offered");
+      setStatus("offered");
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Request failed");
     } finally {
@@ -519,7 +498,7 @@ function SessionTester({
   return (
     <Panel
       title="3 · Customer retention session"
-      description="Test what a cancelling customer sees (DevPilot AI Pro Monthly, $29/month)"
+      description={`Test what a cancelling customer sees (DevPilot AI Pro Monthly, $${DEVPILOT.monthlyPrice}/month)`}
       action={<StatusPill tone={statusTone[status]}>{label(status)}</StatusPill>}
     >
       {!profile ? (
@@ -566,9 +545,6 @@ function SessionTester({
                 <div className="mt-4 rounded-lg border border-violet/30 bg-violet/10 p-4">
                   <div className="flex items-center justify-between gap-2">
                     <p className="font-medium">{decision.offer.title}</p>
-                    {decision.status === "needs_approval" && (
-                      <StatusPill tone="warning">Needs merchant approval</StatusPill>
-                    )}
                   </div>
                   <p className="mt-1 text-xs text-muted-foreground">
                     {label(decision.offer.type)}

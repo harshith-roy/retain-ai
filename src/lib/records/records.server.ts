@@ -96,9 +96,6 @@ export async function persistOffer(input: {
       "ai_offer",
       `${decision.status}${decision.offer ? ` · ${decision.offer.title}` : ""}${passed ? " · all policy checks passed" : ` · guardrails: ${decision.violations.join(", ")}`}`,
     ),
-    ...(decision.status === "needs_approval"
-      ? [activity("approval_requested", "Offer is waiting for merchant approval.")]
-      : []),
   ];
   const writes: Write[] = [
     {
@@ -114,7 +111,7 @@ export async function persistOffer(input: {
         offer: decision.offer?.title ?? "No offer",
         status: sessionStatusFor({
           decisionStatus: decision.status,
-          approval: decision.status === "needs_approval" ? "pending" : null,
+          approval: "not_required",
           choice: null,
           verifiedStatus: null,
           outcome: null,
@@ -127,7 +124,7 @@ export async function persistOffer(input: {
         decisionToken: input.decisionToken,
         policyCheck: { passed, violations: decision.violations },
         policySnapshot: input.policy,
-        approval: decision.status === "needs_approval" ? "pending" : "not_required",
+        approval: "not_required",
         customerChoice: null,
         paypalOutcome: null,
         verifiedStatus: null,
@@ -149,24 +146,6 @@ export async function persistOffer(input: {
       ...entries,
     ),
   ];
-  if (decision.status === "needs_approval")
-    writes.push({
-      op: "create",
-      path: `merchants/${m}/approvals/${requestId}`,
-      data: {
-        sessionId: requestId,
-        customerUid: who.uid,
-        customerName: who.name,
-        type: decision.offer?.type ?? "offer",
-        title: decision.offer?.title ?? "Offer",
-        amount: decision.offer
-          ? Math.round(input.monthlyPrice * decision.offer.discountPct) / 100
-          : 0,
-        reason: decision.rationale.slice(0, 400),
-        status: "pending",
-        createdAt: now,
-      },
-    });
   return commit(writes); // false => this requestId was already stored (duplicate submit)
 }
 

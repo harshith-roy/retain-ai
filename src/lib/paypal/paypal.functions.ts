@@ -2,7 +2,13 @@ import { createServerFn } from "@tanstack/react-start";
 import { getRequest } from "@tanstack/react-start/server";
 import { z } from "zod";
 import { verifyFirebaseIdentity, verifyFirebaseUser } from "@/lib/retention/providers.server";
-import { DEVPILOT, authorizeOperation, verifyDecision, type Authorization } from "./journey";
+import {
+  DEVPILOT,
+  authorizeOperation,
+  verifyDecision,
+  verifyRevision,
+  type Authorization,
+} from "./journey";
 import {
   PaypalError,
   createSubscription,
@@ -10,6 +16,7 @@ import {
   getPlanPrice,
   getSubscription,
   isSubscriptionId,
+  reviseSubscription,
   runOperation,
 } from "./paypal.server";
 import { lookupOwnedSubscription } from "./subscription-lookup";
@@ -142,11 +149,16 @@ export const recordCustomerDecision = createServerFn({ method: "POST" })
       if (sess && sess["customerUid"] !== who.uid)
         throw new Error("That retention session does not belong to you.");
       const decision = (sess?.["decision"] as unknown as z.infer<typeof DecisionShape>) ?? null;
-      const result = await execute(who.uid, {
-        ...data,
-        decision,
-        decisionToken: sess ? String(sess["decisionToken"] ?? "") : null,
-      }).catch((e: unknown) => ({
+      const origin = new URL(getRequest().url).origin;
+      const result = await execute(
+        who.uid,
+        {
+          ...data,
+          decision,
+          decisionToken: sess ? String(sess["decisionToken"] ?? "") : null,
+        },
+        origin,
+      ).catch((e: unknown) => ({
         ok: true as const,
         executed: false,
         outcome: "paypal_failed" as const,
@@ -154,6 +166,8 @@ export const recordCustomerDecision = createServerFn({ method: "POST" })
         statusBefore: null,
         verifiedStatus: null,
         verified: false,
+        approveUrl: null,
+        verifiedPrice: null,
       }));
       const choice =
         data.action === "accept_offer"
@@ -207,40 +221,57 @@ export const recordCustomerDecision = createServerFn({ method: "POST" })
       }
       writes.push(rec.finishClaim(merchantId, key, result));
       await commit(writes);
+      const planPrice = await getPlanPrice(await findDevpilotPlan()).catch(() => null);
+      const basePrice = planPrice?.amount ?? DEVPILOT.monthlyPrice;
       if (result.verifiedStatus && isSubscriptionId(data.subscriptionId)) {
-        const price = await getPlanPrice(await findDevpilotPlan()).catch(() => null);
         const s2 = await getSubscription(data.subscriptionId);
         if (s2 && s2.customId === who.uid)
           await rec.upsertVerifiedSubscription(merchantId, who, {
             id: s2.id,
             status: s2.status,
-            amount: price?.amount ?? null,
+            amount: result.verifiedPrice ?? planPrice?.amount ?? null,
             startTime: s2.raw.start_time ?? null,
           });
       }
       const n = await import("@/lib/notify/notify.server");
+      const months = Math.max(1, Number(decision?.offer?.durationMonths ?? 1) || 1);
       await n.capture("retention_customer_decision", merchantId, {
         customerUid: who.uid,
         action: data.action,
         outcome: result.outcome,
         paypalVerified: result.verified,
         verifiedStatus: result.verifiedStatus,
-        verifiedRevenueSaved:
-          result.verified && result.verifiedStatus === "SUSPENDED" ? DEVPILOT.monthlyPrice : 0,
+        verifiedRevenueSaved: !result.verified
+          ? 0
+          : result.verifiedStatus === "SUSPENDED"
+            ? basePrice
+            : result.verifiedPrice != null
+              ? Math.max(0, basePrice - result.verifiedPrice) * months
+              : 0,
       });
       if (result.verified) {
-        const paused = result.verifiedStatus === "SUSPENDED";
+        const status = result.verifiedStatus;
+        const paused = status === "SUSPENDED";
+        const cancelled = status === "CANCELLED";
         await n.sendEmail(
           who.email,
-          paused
-            ? "Your DevPilot AI Pro subscription is paused"
-            : "Your DevPilot AI Pro subscription is cancelled",
+          cancelled
+            ? "Your DevPilot AI Pro subscription is cancelled"
+            : paused
+              ? "Your DevPilot AI Pro subscription is paused"
+              : "Your DevPilot AI Pro discount is active",
           n.outcomeEmail(
             who.name,
-            paused ? "Subscription paused" : "Subscription cancelled",
-            paused
-              ? "PayPal confirms your subscription is paused. You won't be billed while it's paused."
-              : "PayPal confirms your subscription is cancelled. You won't be billed again.",
+            cancelled
+              ? "Subscription cancelled"
+              : paused
+                ? "Subscription paused"
+                : "Discount applied",
+            cancelled
+              ? "PayPal confirms your subscription is cancelled. You won't be billed again."
+              : paused
+                ? "PayPal confirms your subscription is paused. You won't be billed while it's paused."
+                : `PayPal confirms your new price is $${result.verifiedPrice?.toFixed(2) ?? "discounted"}/month for ${months} month(s). Your original price returns after that.`,
           ),
           `outcome-${data.actionId}`,
         );
@@ -248,6 +279,121 @@ export const recordCustomerDecision = createServerFn({ method: "POST" })
       return { ...result, duplicate: false };
     } catch (e) {
       return { ...fail(e), duplicate: false };
+    }
+  });
+
+/**
+ * Called after the customer approves a revised price on PayPal. Re-reads the
+ * subscription and only records the new price if PayPal exposes the discounted
+ * billing cycle we sent.
+ */
+export const confirmSubscriptionRevision = createServerFn({ method: "POST" })
+  .inputValidator((d: unknown) =>
+    z
+      .object({
+        idToken: token,
+        subscriptionId: z.string().max(40),
+        offerRequestId: z.string().uuid().nullable(),
+      })
+      .parse(d),
+  )
+  .handler(async ({ data }) => {
+    try {
+      const who = await verifyFirebaseIdentity(data.idToken);
+      const rec = await import("@/lib/records/records.server");
+      const { merchantId } = await rec.resolveMerchant(who.uid);
+      if (!isSubscriptionId(data.subscriptionId))
+        return { ok: false as const, error: "That is not a PayPal subscription ID." };
+      const sess = data.offerRequestId
+        ? await rec.readSession(merchantId, data.offerRequestId)
+        : null;
+      if (sess && sess["customerUid"] !== who.uid)
+        throw new Error("That retention session does not belong to you.");
+      const stored = sess?.["decision"] as {
+        offer?: { discountPct?: number; durationMonths?: number } | null;
+      } | null;
+      const discountPct = Number(stored?.offer?.discountPct ?? 0);
+      const durationMonths = Number(stored?.offer?.durationMonths ?? 0);
+      if (!(discountPct > 0) || !(durationMonths > 0))
+        return { ok: false as const, error: "There is no discount revision to confirm." };
+
+      const planId = await findDevpilotPlan();
+      const planPrice = await getPlanPrice(planId);
+      const base = planPrice?.amount ?? DEVPILOT.monthlyPrice;
+      const expectedPrice = (base * (1 - discountPct / 100)).toFixed(2);
+      const sub = await getSubscription(data.subscriptionId);
+      if (!sub || sub.customId !== who.uid)
+        return {
+          ok: false as const,
+          error: "PayPal has no subscription with that ID for your account.",
+        };
+      const check = verifyRevision(sub, {
+        planId,
+        price: expectedPrice,
+        currency: planPrice?.currency ?? DEVPILOT.currency,
+        durationMonths,
+      });
+
+      const { commit } = await import("@/lib/firebase/admin.server");
+      const entry = rec.activity("paypal_revision", check.reason, check.verified);
+      const outcome = check.verified ? "verified" : "unverified";
+      const writes: Parameters<typeof commit>[0] = [
+        rec.journeyWrite(
+          merchantId,
+          who.uid,
+          {
+            paypalOutcome: outcome,
+            paypalReason: check.reason,
+            verifiedStatus: sub.status,
+            verifiedAt: check.verified ? new Date().toISOString() : null,
+          },
+          entry,
+        ),
+      ];
+      if (sess && data.offerRequestId) {
+        const { sessionStatusFor } = await import("@/lib/records/model");
+        writes.push({
+          op: "merge",
+          path: `merchants/${merchantId}/retentionSessions/${data.offerRequestId}`,
+          data: {
+            paypalOutcome: outcome,
+            paypalReason: check.reason,
+            verifiedStatus: sub.status,
+            status: sessionStatusFor({
+              decisionStatus: "offer",
+              approval: (sess["approval"] as "pending") ?? null,
+              choice: "accepted",
+              verifiedStatus: sub.status,
+              outcome,
+            }),
+          },
+          append: { activity: [entry] },
+        });
+      }
+      await commit(writes);
+
+      if (check.verified) {
+        await rec.upsertVerifiedSubscription(merchantId, who, {
+          id: sub.id,
+          status: sub.status,
+          amount: check.effectivePrice,
+          startTime: sub.raw.start_time ?? null,
+        });
+        const n = await import("@/lib/notify/notify.server");
+        await n.capture("retention_revision_confirmed", merchantId, {
+          customerUid: who.uid,
+          verifiedStatus: sub.status,
+          verifiedPrice: check.effectivePrice,
+        });
+      }
+      return {
+        ok: true as const,
+        verified: check.verified,
+        status: sub.status,
+        reason: check.reason,
+      };
+    } catch (e) {
+      return fail(e);
     }
   });
 
@@ -262,6 +408,7 @@ async function execute(
     decision: z.infer<typeof DecisionShape> | null;
     decisionToken: string | null;
   },
+  origin: string,
 ) {
   const secret = process.env["RETAIN_SIGNING_SECRET"];
   if (!secret) throw new Error("Server signing key is not configured.");
@@ -275,6 +422,7 @@ async function execute(
     data.offerRequestId &&
     (await verifyDecision(secret, uid, data.offerRequestId, decision, data.decisionToken))
   );
+  const planId = await findDevpilotPlan();
   const auth: Authorization = authorizeOperation({
     action: data.action,
     consent: data.consent,
@@ -282,7 +430,7 @@ async function execute(
     decisionVerified,
     subscription: sub,
     uid,
-    expectedPlanId: await findDevpilotPlan(),
+    expectedPlanId: planId,
   });
   const before = sub?.status ?? null;
   if (!auth.allowed)
@@ -294,7 +442,79 @@ async function execute(
       statusBefore: before,
       verifiedStatus: before,
       verified: false,
+      approveUrl: null,
+      verifiedPrice: null,
     };
+
+  if (auth.operation === "revise") {
+    const offer = decision?.offer;
+    if (!offer || offer.type !== "discount")
+      return {
+        ok: true as const,
+        executed: false,
+        outcome: "rejected" as const,
+        reason: "There is no discount to apply.",
+        statusBefore: before,
+        verifiedStatus: before,
+        verified: false,
+        approveUrl: null,
+        verifiedPrice: null,
+      };
+    const planPrice = await getPlanPrice(planId).catch(() => null);
+    const base = planPrice?.amount ?? DEVPILOT.monthlyPrice;
+    const newPrice = (base * (1 - offer.discountPct / 100)).toFixed(2);
+    let revision: Awaited<ReturnType<typeof reviseSubscription>>;
+    try {
+      revision = await reviseSubscription(data.subscriptionId, newPrice, offer.durationMonths, {
+        requestId: data.actionId,
+        returnUrl: `${origin}/portal/devpilot?paypal=revised&sub=${encodeURIComponent(data.subscriptionId)}&session_id=${encodeURIComponent(data.offerRequestId ?? "")}`,
+        cancelUrl: `${origin}/portal/devpilot?paypal=revision_cancelled`,
+      });
+    } catch (e) {
+      return {
+        ok: true as const,
+        executed: false,
+        outcome: "paypal_failed" as const,
+        reason: e instanceof Error ? e.message : "PayPal revision failed.",
+        statusBefore: before,
+        verifiedStatus: before,
+        verified: false,
+        approveUrl: null,
+        verifiedPrice: null,
+      };
+    }
+    const after = await getSubscription(data.subscriptionId);
+    if (revision.approveUrl)
+      return {
+        ok: true as const,
+        executed: true,
+        outcome: "awaiting_customer_approval" as const,
+        reason: `PayPal needs you to approve ${revision.currency} ${revision.price}/month for ${revision.durationMonths} month(s) before the discount applies.`,
+        statusBefore: before,
+        verifiedStatus: after?.status ?? before,
+        verified: false,
+        approveUrl: revision.approveUrl,
+        verifiedPrice: null,
+      };
+    const check = verifyRevision(after, {
+      planId,
+      price: revision.price,
+      currency: revision.currency,
+      durationMonths: revision.durationMonths,
+    });
+    return {
+      ok: true as const,
+      executed: true,
+      outcome: check.verified ? ("verified" as const) : ("unverified" as const),
+      reason: check.reason,
+      statusBefore: before,
+      verifiedStatus: after?.status ?? null,
+      verified: check.verified,
+      approveUrl: null,
+      verifiedPrice: check.effectivePrice,
+    };
+  }
+
   try {
     await runOperation(
       data.subscriptionId,
@@ -313,6 +533,8 @@ async function execute(
       statusBefore: before,
       verifiedStatus: before,
       verified: false,
+      approveUrl: null,
+      verifiedPrice: null,
     };
   }
   const after = await getSubscription(data.subscriptionId);
@@ -327,5 +549,7 @@ async function execute(
     statusBefore: before,
     verifiedStatus: after?.status ?? null,
     verified,
+    approveUrl: null,
+    verifiedPrice: null,
   };
 }

@@ -4,9 +4,7 @@ import {
   canDecideApproval,
   canManageTeam,
   decideSignup,
-  emailAllowed,
   overLimit,
-  parseAllowlist,
   rateBuckets,
 } from "@/lib/security/access";
 
@@ -50,33 +48,14 @@ describe("merchant sign-up access", () => {
   const now = new Date("2026-11-03T00:00:00Z");
   const base = {
     existingMember: false,
-    email: "new@acme.com",
-    emailVerified: true,
     invite: null,
-    allowlist: [] as string[],
     now,
   };
   it("always keeps existing members (project owner, QA accounts) signed in", () => {
-    expect(
-      decideSignup({ ...base, existingMember: true, emailVerified: false, email: "" }).kind,
-    ).toBe("existing");
+    expect(decideSignup({ ...base, existingMember: true }).kind).toBe("existing");
   });
-  it("denies open Google sign-up without invite or allow-list", () => {
-    expect(decideSignup(base).kind).toBe("denied");
-  });
-  it("denies unverified emails even when allow-listed", () => {
-    expect(decideSignup({ ...base, emailVerified: false, allowlist: ["new@acme.com"] }).kind).toBe(
-      "denied",
-    );
-  });
-  it("lets allow-listed emails or domains create their own workspace", () => {
-    expect(decideSignup({ ...base, allowlist: parseAllowlist("new@acme.com") }).kind).toBe(
-      "create_owner",
-    );
-    expect(decideSignup({ ...base, allowlist: parseAllowlist("@acme.com, other@x.io") }).kind).toBe(
-      "create_owner",
-    );
-    expect(emailAllowed("new@acme.com.evil.io", parseAllowlist("@acme.com"))).toBe(false);
+  it("creates an owner workspace for any new signed-in account", () => {
+    expect(decideSignup(base)).toEqual({ kind: "create_owner" });
   });
   it("joins the inviting workspace as approver with a valid pending invite", () => {
     const d = decideSignup({
@@ -90,7 +69,7 @@ describe("merchant sign-up access", () => {
     });
     expect(d).toEqual({ kind: "join", merchantId: "m1", role: "approver" });
   });
-  it("ignores expired, revoked or owner-role invites", () => {
+  it("falls back to a new workspace for expired, revoked or owner-role invites", () => {
     expect(
       decideSignup({
         ...base,
@@ -101,19 +80,19 @@ describe("merchant sign-up access", () => {
           expiresAt: "2026-11-01T00:00:00Z",
         },
       }).kind,
-    ).toBe("denied");
+    ).toBe("create_owner");
     expect(
       decideSignup({
         ...base,
         invite: { merchantId: "m1", role: "approver", status: "revoked", expiresAt: null },
       }).kind,
-    ).toBe("denied");
+    ).toBe("create_owner");
     expect(
       decideSignup({
         ...base,
         invite: { merchantId: "m1", role: "owner", status: "pending", expiresAt: null },
       }).kind,
-    ).toBe("denied");
+    ).toBe("create_owner");
   });
 });
 

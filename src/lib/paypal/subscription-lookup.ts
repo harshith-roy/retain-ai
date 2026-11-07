@@ -23,7 +23,19 @@ export interface RawSub {
         };
         time?: string | null;
       };
+      cycle_executions?:
+        { sequence: number; cycle_stage: string; cycles_completed: number }[] | null;
     };
+    plan_overridden?: boolean | null;
+    plan?: {
+      billing_cycles?:
+        | {
+            sequence: number;
+            tenure_type?: string;
+            pricing_scheme?: { fixed_price?: { value: string; currency_code: string } };
+          }[]
+        | null;
+    } | null;
     status_update_time?: string | null;
     start_time?: string | null;
   };
@@ -50,6 +62,21 @@ export interface SubscriptionDTO {
 export type LookupResult =
   { ok: true; subscription: SubscriptionDTO } | { ok: false; error: string };
 
+/** When PayPal exposes an overridden plan, report the cycle currently in effect. */
+export function currentCyclePrice(raw: RawSub["raw"]): { amount: number; currency: string } | null {
+  const cycles = raw?.plan_overridden ? raw.plan?.billing_cycles : null;
+  if (!cycles?.length) return null;
+  const currentSeq = raw.billing_info?.cycle_executions?.find(
+    (e) => e.cycle_stage === "CURRENT",
+  )?.sequence;
+  const cycle =
+    (currentSeq != null ? cycles.find((c) => c.sequence === currentSeq) : undefined) ?? cycles[0];
+  const fixed = cycle?.pricing_scheme?.fixed_price;
+  if (!fixed) return null;
+  const amount = Number(fixed.value);
+  return Number.isFinite(amount) ? { amount, currency: fixed.currency_code } : null;
+}
+
 export async function lookupOwnedSubscription(
   deps: LookupDeps,
   idToken: string,
@@ -65,7 +92,8 @@ export async function lookupOwnedSubscription(
   if (!deps.isSubscriptionId(subscriptionId)) return { ok: false, error: INVALID_ID };
   const s = await deps.getSubscription(subscriptionId);
   if (!s || !s.customId || s.customId !== uid) return { ok: false, error: NOT_FOUND };
-  const price = await deps.getPlanPrice(s.planId).catch(() => null);
+  const planPrice = await deps.getPlanPrice(s.planId).catch(() => null);
+  const price = currentCyclePrice(s.raw) ?? planPrice;
   const lp = s.raw?.billing_info?.last_payment;
   return {
     ok: true,

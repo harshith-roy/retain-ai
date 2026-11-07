@@ -40,20 +40,6 @@ export function canManageTeam(role: string): Verdict {
 
 export const normalizeEmail = (e: string) => e.trim().toLowerCase();
 
-/** Allow-list entries: full emails ("a@b.com") or whole domains ("@b.com"). */
-export function parseAllowlist(raw: string | undefined | null): string[] {
-  return (raw ?? "")
-    .split(/[,\s]+/)
-    .map(normalizeEmail)
-    .filter((x) => x.length > 2 && x.includes("@"));
-}
-export function emailAllowed(email: string, allowlist: string[]): boolean {
-  const e = normalizeEmail(email);
-  if (!e.includes("@")) return false;
-  const domain = e.slice(e.indexOf("@"));
-  return allowlist.some((a) => (a.startsWith("@") ? a === domain : a === e));
-}
-
 export interface InviteFacts {
   merchantId: string;
   role: string;
@@ -63,24 +49,19 @@ export interface InviteFacts {
 export type SignupDecision =
   | { kind: "existing" }
   | { kind: "join"; merchantId: string; role: MerchantRole }
-  | { kind: "create_owner" }
-  | { kind: "denied"; error: string };
+  | { kind: "create_owner" };
 
 /**
- * Who may get a workspace. Existing members always keep access, so the
- * project owner and current QA accounts are never locked out.
+ * Who may get a workspace. Every signed-in account gets one: existing members
+ * keep their workspace, valid invitations join the inviting workspace, and
+ * everyone else owns a new workspace.
  */
 export function decideSignup(input: {
   existingMember: boolean;
-  email: string;
-  emailVerified: boolean;
   invite: InviteFacts | null;
-  allowlist: string[];
   now: Date;
 }): SignupDecision {
   if (input.existingMember) return { kind: "existing" };
-  if (!input.email || !input.emailVerified)
-    return { kind: "denied", error: "Your Google email must be verified to join RETAIN.AI." };
   const inv = input.invite;
   if (
     inv &&
@@ -90,11 +71,7 @@ export function decideSignup(input: {
   ) {
     return { kind: "join", merchantId: inv.merchantId, role: inv.role as MerchantRole };
   }
-  if (emailAllowed(input.email, input.allowlist)) return { kind: "create_owner" };
-  return {
-    kind: "denied",
-    error: "RETAIN.AI is invitation-only. Ask a workspace owner to invite this email address.",
-  };
+  return { kind: "create_owner" };
 }
 
 // --- Rate limits ---

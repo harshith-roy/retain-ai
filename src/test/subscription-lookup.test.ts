@@ -57,6 +57,45 @@ describe("ownership-bound subscription lookup", () => {
     }
   });
 
+  it("reports the overridden cycle price when PayPal exposes one", async () => {
+    const overridden: RawSub = {
+      id: "I-OWNED00001",
+      status: "ACTIVE",
+      planId: "P-1",
+      customId: "alice",
+      raw: {
+        plan_overridden: true,
+        plan: {
+          billing_cycles: [
+            {
+              sequence: 1,
+              tenure_type: "TRIAL",
+              pricing_scheme: { fixed_price: { value: "40.00", currency_code: "USD" } },
+            },
+            {
+              sequence: 2,
+              tenure_type: "REGULAR",
+              pricing_scheme: { fixed_price: { value: "50.00", currency_code: "USD" } },
+            },
+          ],
+        },
+        billing_info: {
+          cycle_executions: [{ sequence: 1, cycle_stage: "CURRENT", cycles_completed: 0 }],
+        },
+      },
+    };
+    const r = await lookupOwnedSubscription(
+      { ...deps, getSubscription: async () => overridden },
+      "alice-token",
+      "I-OWNED00001",
+    );
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.subscription.amount).toBe(40);
+      expect(r.subscription.currency).toBe("USD");
+    }
+  });
+
   it("returns only a generic not-found for another user's subscription", async () => {
     const r = await lookupOwnedSubscription(deps, "alice-token", "I-OTHER00001");
     expect(r).toEqual({ ok: false, error: NOT_FOUND });
