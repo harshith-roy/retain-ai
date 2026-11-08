@@ -2,7 +2,7 @@ import { inngest } from "./inngest-client.server";
 
 /**
  * Server-only outbound integrations: Slack, Resend, PostHog,
- * Inngest and ElevenLabs.
+ * Inngest and local Kokoro text-to-speech.
  *
  * Notifications are best-effort and never alter PayPal outcomes.
  */
@@ -179,42 +179,103 @@ export function sendEvent(name: string, data: Record<string, unknown>, id?: stri
   });
 }
 
-// --- ElevenLabs ---
+// --- Kokoro TTS (local, open source) ---
 
-export async function speak(text: string): Promise<string> {
-  const key = process.env["ELEVENLABS_API_KEY"];
-  if (!key) throw new Error("Voice is not configured.");
+const TTS_MODEL = "onnx-community/Kokoro-82M-v1.0-ONNX";
+const TTS_VOICE = "af_heart";
 
-  const res = await fetch(
-    "https://api.elevenlabs.io/v1/text-to-speech/EXAVITQu4vr4xnSDxMaL?output_format=mp3_44100_64",
-    {
-      method: "POST",
-      headers: {
-        "xi-api-key": key,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        text: text.slice(0, 900),
-        model_id: "eleven_turbo_v2_5",
-        voice_settings: {
-          stability: 0.45,
-          similarity_boost: 0.75,
-        },
-      }),
-    },
-  );
+let engine: Promise<import("kokoro-js").KokoroTTS> | null = null;
 
-  if (!res.ok) {
-    console.error(`ElevenLabs ${res.status}: ${await res.text()}`);
-    throw new Error(`Voice generation failed (${res.status}).`);
+async function ttsEngine() {
+  if (!engine) {
+    engine = (async () => {
+      const [{ KokoroTTS }, { env }] = await Promise.all([
+        import("kokoro-js"),
+        import("@huggingface/transformers"),
+      ]);
+      // Serverless filesystems are read-only; the model must cache under /tmp.
+      if (process.env["VERCEL"]) env.cacheDir = "/tmp/kokoro-cache";
+      env.allowLocalModels = false;
+      return KokoroTTS.from_pretrained(TTS_MODEL, { dtype: "q8" });
+    })().catch((e) => {
+      engine = null;
+      throw e;
+    });
+  }
+  return engine;
+}
+
+/** Sentence-aware chunks so no chunk gets truncated by the model's token limit. */
+function speechChunks(text: string, max = 400): string[] {
+  const out: string[] = [];
+  let current = "";
+  for (const sentence of text.match(/[^.!?]+[.!?]*/g) ?? [text]) {
+    const rest = sentence.trim();
+    if (!rest) continue;
+    if (current && current.length + rest.length + 1 > max) {
+      out.push(current);
+      current = "";
+    }
+    current = current ? `${current} ${rest}` : rest;
+    while (current.length > max) {
+      out.push(current.slice(0, max));
+      current = current.slice(max);
+    }
+  }
+  if (current) out.push(current);
+  return out;
+}
+
+function wavBase64(samples: Float32Array, sampleRate: number): string {
+  const buffer = new ArrayBuffer(44 + samples.length * 2);
+  const view = new DataView(buffer);
+  const ascii = (offset: number, s: string) => {
+    for (let i = 0; i < s.length; i++) view.setUint8(offset + i, s.charCodeAt(i));
+  };
+  ascii(0, "RIFF");
+  view.setUint32(4, 36 + samples.length * 2, true);
+  ascii(8, "WAVE");
+  ascii(12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  ascii(36, "data");
+  view.setUint32(40, samples.length * 2, true);
+  for (let i = 0, o = 44; i < samples.length; i++, o += 2) {
+    const s = Math.max(-1, Math.min(1, samples[i]!));
+    view.setInt16(o, s < 0 ? s * 0x8000 : s * 0x7fff, true);
   }
 
-  const bytes = new Uint8Array(await res.arrayBuffer());
-  let s = "";
-
+  const bytes = new Uint8Array(buffer);
+  let binary = "";
   for (let i = 0; i < bytes.length; i += 0x8000) {
-    s += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+    binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  }
+  return btoa(binary);
+}
+
+export async function speak(text: string): Promise<{ audio: string; mime: string }> {
+  const tts = await ttsEngine();
+  const parts: Float32Array[] = [];
+  let sampleRate = 24_000;
+
+  for (const chunk of speechChunks(text.slice(0, 900))) {
+    const out = await tts.generate(chunk, { voice: TTS_VOICE });
+    sampleRate = out.sampling_rate;
+    parts.push(out.audio);
   }
 
-  return btoa(s);
+  const total = parts.reduce((n, a) => n + a.length, 0);
+  const samples = new Float32Array(total);
+  let offset = 0;
+  for (const part of parts) {
+    samples.set(part, offset);
+    offset += part.length;
+  }
+
+  return { audio: wavBase64(samples, sampleRate), mime: "audio/wav" };
 }

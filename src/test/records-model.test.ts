@@ -66,7 +66,35 @@ describe("session status", () => {
   });
 });
 
+const escalated: Decision = {
+  status: "escalated",
+  offer: null,
+  escalation: "Refund request",
+  message: "m",
+  rationale: "r",
+  violations: [],
+};
+
 describe("approvals", () => {
+  it("escalated sessions wait as pending human review", () => {
+    expect(
+      sessionStatusFor({
+        decisionStatus: "escalated",
+        approval: "pending",
+        choice: null,
+        verifiedStatus: null,
+        outcome: null,
+      }),
+    ).toBe("escalated");
+  });
+  it("resolving an escalation closes it without inventing an offer", () => {
+    for (const outcome of ["approved", "rejected"] as const) {
+      const d = applyApproval(escalated, outcome);
+      expect(d.status).toBe("no_offer");
+      expect(d.offer).toBeNull();
+      expect(d.message.toLowerCase()).toContain("cancel");
+    }
+  });
   it("approval makes the offer available", () =>
     expect(applyApproval(pending, "approved").status).toBe("offer"));
   it("rejection withdraws the offer", () => {

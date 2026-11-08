@@ -53,6 +53,7 @@ export const ProposalSchema = z.object({
   message: z.string().min(1).max(1200),
   offer: OfferSchema.nullable(),
   rationale: z.string().max(600),
+  escalate: z.boolean().default(false),
 });
 export type Proposal = z.infer<typeof ProposalSchema>;
 
@@ -76,6 +77,14 @@ export type Decision =
       rationale: string;
       violations: string[];
     }
+  | {
+      status: "escalated";
+      offer: null;
+      escalation: string;
+      message: string;
+      rationale: string;
+      violations: string[];
+    }
   | { status: "no_offer"; offer: null; message: string; rationale: string; violations: string[] };
 
 /** Phrases that would falsely claim a financial action already happened. */
@@ -91,6 +100,49 @@ export function claimsCompletedAction(text: string) {
 export const SAFE_FALLBACK_MESSAGE =
   "Thanks for telling us why you're thinking of leaving. We'd like to help if we can — and if you'd still prefer to cancel, you can continue at any time.";
 export const CANCEL_REMINDER = "You can still continue with cancellation at any time.";
+export const ESCALATION_MESSAGE =
+  "I've stopped the automated offers and passed this to a human on the DevPilot team — they'll follow up with you here. You can still continue with cancellation at any time.";
+
+const ESCALATION_PATTERNS: { kind: string; re: RegExp }[] = [
+  { kind: "Refund request", re: /\brefund(s|ed)?\b/i },
+  { kind: "Refund request", re: /\b(money back|charge ?back|billing dispute)\b/i },
+  {
+    kind: "Human handoff",
+    re: /\b(speak|talk|connect|transfer|put me through|reach)\b[^.!?]{0,40}\b(human|person|manager|supervisor|representative|agent|someone|somebody)\b/i,
+  },
+  { kind: "Human handoff", re: /\b(real|actual)\s+(human|person)\b/i },
+  {
+    kind: "Human handoff",
+    re: /\b(i want|i need|get me|call me)\b[^.!?]{0,20}\b(manager|supervisor|human)\b/i,
+  },
+  {
+    kind: "Legal escalation",
+    re: /\b(lawyer|attorney|lawsuit|sue|legal action|regulator|ombudsman)\b/i,
+  },
+  {
+    kind: "Structural change",
+    re: /\b(change|switch|move|transfer|convert)\b[^.!?]{0,40}\b(annual|yearly|quarterly|billing (cycle|interval|period)|plan type|account owner|ownership|invoice|currency|contract)\b/i,
+  },
+  { kind: "Structural change", re: /\b(partial refund|prorat(e|ed) refund|purchase order)\b/i },
+];
+
+/** Deterministic escalation intent: matched before the model runs, so it cannot be talked out of. */
+export function escalationRequested(text: string): string | null {
+  const t = text.trim();
+  if (!t) return null;
+  return ESCALATION_PATTERNS.find((p) => p.re.test(t))?.kind ?? null;
+}
+
+export function escalateDecision(kind: string): Decision {
+  return {
+    status: "escalated",
+    offer: null,
+    escalation: kind,
+    message: ESCALATION_MESSAGE,
+    rationale: `${kind}: the customer asked for something outside automated retention offers.`,
+    violations: [],
+  };
+}
 
 export interface EnforceContext {
   offersSoFar: number;
@@ -154,6 +206,18 @@ export function enforcePolicy(
     violations,
   });
 
+  if (proposal.escalate)
+    return {
+      status: "escalated",
+      offer: null,
+      escalation: "Customer request",
+      message,
+      rationale:
+        proposal.rationale ||
+        "The customer asked for a human or an action outside automated retention offers.",
+      violations,
+    };
+
   if (ctx.offersSoFar >= policy.maxOffers) {
     violations.push("max_offers_reached");
     return noOffer("Maximum offers for this session already reached.");
@@ -199,4 +263,5 @@ Rules you must never break:
 - Only propose offers whose type is in allowedAlternatives and whose discountPct is <= maxDiscountPct. You cannot change policy.
 - Never claim a subscription was changed, a discount applied, or a payment/refund completed. Offers are proposals the customer can accept; nothing changes until they accept.
 - Always respect the customer's right to cancel; mention they can continue cancelling.
-Reply ONLY with JSON: {"message": string, "offer": {"type": "discount"|"pause"|"downgrade"|"skip_month", "discountPct": number, "durationMonths": number, "title": string} | null, "rationale": string}`;
+- If the customer explicitly demands a refund, requests a human manager, or asks for a structural change you cannot perform (plan type, billing interval, account ownership, invoices, currency, contracts, legal disputes), you MUST NOT offer any discounts or pauses. You must immediately stop negotiating: set "offer" to null and "escalate" to true, and tell them a member of the team will follow up.
+Reply ONLY with JSON: {"message": string, "offer": {"type": "discount"|"pause"|"downgrade"|"skip_month", "discountPct": number, "durationMonths": number, "title": string} | null, "rationale": string, "escalate": boolean}`;

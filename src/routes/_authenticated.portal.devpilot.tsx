@@ -529,6 +529,11 @@ function Portal() {
               <p className="text-sm leading-relaxed">{d.message}</p>
               <ListenButton text={d.message} />
             </div>
+            {d.status === "escalated" && (
+              <p className="mt-2 text-xs text-muted-foreground">
+                Pending human review — no automated offer was made.
+              </p>
+            )}
             {d.offer && (
               <div className="mt-4 rounded-xl border border-violet/30 bg-violet/10 p-4">
                 <div className="flex flex-wrap items-center justify-between gap-2">
@@ -654,7 +659,7 @@ function ListenButton({ text }: { text: string }) {
         toast.error(r.error);
         return;
       }
-      await new Audio(`data:audio/mpeg;base64,${r.audio}`).play();
+      await new Audio(`data:${r.mime};base64,${r.audio}`).play();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Couldn't play the voice message.");
     } finally {

@@ -90,6 +90,7 @@ export async function persistOffer(input: {
   const { m, who, requestId, decision } = input;
   const now = new Date().toISOString();
   const passed = decision.violations.length === 0;
+  const approval = decision.status === "escalated" ? "pending" : "not_required";
   const entries = [
     activity("cancellation_reason", `${input.reason}: “${input.reasonDetail.slice(0, 140)}”`),
     activity(
@@ -111,7 +112,7 @@ export async function persistOffer(input: {
         offer: decision.offer?.title ?? "No offer",
         status: sessionStatusFor({
           decisionStatus: decision.status,
-          approval: "not_required",
+          approval,
           choice: null,
           verifiedStatus: null,
           outcome: null,
@@ -124,13 +125,31 @@ export async function persistOffer(input: {
         decisionToken: input.decisionToken,
         policyCheck: { passed, violations: decision.violations },
         policySnapshot: input.policy,
-        approval: "not_required",
+        approval,
         customerChoice: null,
         paypalOutcome: null,
         verifiedStatus: null,
         activity: entries,
       },
     },
+    ...(decision.status === "escalated"
+      ? [
+          {
+            op: "create" as const,
+            path: `merchants/${m}/approvals/${requestId}`,
+            data: {
+              sessionId: requestId,
+              customerUid: who.uid,
+              customerName: who.name,
+              type: decision.escalation,
+              amount: 0,
+              reason: `${decision.escalation} — “${input.reasonDetail.slice(0, 140)}”`,
+              status: "pending",
+              createdAt: now,
+            },
+          },
+        ]
+      : []),
     journeyWrite(
       m,
       who.uid,

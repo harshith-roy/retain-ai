@@ -93,6 +93,17 @@ export function sessionStatusFor(x: {
 
 /** Approval decisions turn a pending proposal into a customer-visible offer, or withdraw it. */
 export function applyApproval(d: Decision, outcome: "approved" | "rejected"): Decision {
+  if (d.status === "escalated")
+    return {
+      status: "no_offer",
+      offer: null,
+      message:
+        outcome === "approved"
+          ? "A member of the DevPilot team has picked this up and will follow up with you here. You can still continue with cancellation at any time."
+          : "Thanks for your patience. We weren't able to arrange a different outcome this time. You can still continue with cancellation at any time.",
+      rationale: d.rationale,
+      violations: d.violations,
+    };
   if (d.status !== "needs_approval") throw new Error("This offer is not waiting for approval.");
   if (outcome === "approved") return { ...d, status: "offer" };
   return {

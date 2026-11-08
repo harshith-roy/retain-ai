@@ -310,7 +310,9 @@ export const decideApproval = createServerFn({ method: "POST" })
         ]);
         return { ok: false as const, error: "This approval is no longer pending." };
       }
-      const decision = applyApproval(sess["decision"] as unknown as Decision, data.outcome);
+      const stored = sess["decision"] as unknown as Decision;
+      const decision = applyApproval(stored, data.outcome);
+      const wasEscalation = stored.status === "escalated";
       const secret = process.env["RETAIN_SIGNING_SECRET"];
       if (!secret) throw new Error("Server signing key is not configured.");
       const customerUid = String(sess["customerUid"]);
@@ -318,7 +320,7 @@ export const decideApproval = createServerFn({ method: "POST" })
       const now = new Date().toISOString();
       const entry = r.activity(
         data.outcome === "approved" ? "approval_granted" : "approval_rejected",
-        `${who.name} ${data.outcome} the offer${data.note ? `: ${data.note}` : "."}`,
+        `${who.name} ${data.outcome} the request${data.note ? `: ${data.note}` : "."}`,
       );
       await commit([
         {
@@ -354,7 +356,7 @@ export const decideApproval = createServerFn({ method: "POST" })
         decidedBy: who.uid,
       });
       await n.slackPost(
-        `${who.name} ${data.outcome} the retention offer for ${String(sess["customerName"] ?? "a customer")}.`,
+        `${who.name} ${data.outcome} the ${wasEscalation ? "escalation" : "retention offer"} for ${String(sess["customerName"] ?? "a customer")}.`,
       );
       return { ok: true as const, duplicate: false, outcome: data.outcome };
     } catch (e) {

@@ -37,7 +37,7 @@
 # Phase 6 — Hackathon integrations
 - [x] Slack approval alerts + decision notices + escalation (Escalation Center link)
 - [x] Inngest durable workflow: retried alerts, 15-min escalation timeout (/api/inngest)
-- [x] ElevenLabs Listen button on portal offers
+- [x] Listen button on portal offers (local Kokoro TTS)
 - [x] Resend outcome emails after PayPal-verified pause/cancel
 - [x] PostHog server events for offers, decisions, approvals, verified outcomes
 - [ ] Firestore saving — blocked: service account still gets 403 (grant Cloud Datastore User)

@@ -57,8 +57,8 @@ function Escalations() {
       else {
         toast.success(
           outcome === "approved"
-            ? "Offer approved — the customer can now accept it"
-            : "Offer rejected",
+            ? "Approved — the customer will see the update"
+            : "Request rejected — the customer keeps their cancellation path",
         );
         notifyJourneyChanged();
       }
@@ -157,9 +157,9 @@ function Escalations() {
       <DevpilotJourneyPanel focus="approval" />
       <div className="mb-4 flex items-start gap-2 rounded-lg border bg-surface px-4 py-3 text-xs text-muted-foreground">
         <Info className="mt-0.5 size-3.5 shrink-0 text-cyan" />
-        Decisions are checked and saved by the server. Approving lets the customer accept the offer;
-        it never changes billing by itself — PayPal changes happen only after the customer accepts
-        and PayPal confirms.
+        Decisions are checked and saved by the server. Approving a discount lets the customer accept
+        it; approving an escalation records that a human is following up. Neither changes billing —
+        PayPal changes happen only after the customer accepts and PayPal confirms.
       </div>
       <DataGate
         hasRows={data.approvals.length > 0}

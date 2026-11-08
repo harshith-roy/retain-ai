@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   DEFAULT_POLICY,
   enforcePolicy,
+  escalateDecision,
+  escalationRequested,
   fenceUntrusted,
   parseProposal,
   type Proposal,
@@ -17,6 +19,7 @@ const p = (offer: Proposal["offer"], extra: Partial<Proposal> = {}): Proposal =>
   message: "We hear you. You can cancel anytime.",
   offer,
   rationale: "Price concern",
+  escalate: false,
   ...extra,
 });
 const ctx = { offersSoFar: 0 };
@@ -102,5 +105,32 @@ describe("retention guardrails", () => {
     expect(enforcePolicy(policy, p(disc(15)), ctx)).toEqual(
       enforcePolicy(policy, p(disc(15)), ctx),
     );
+  });
+});
+
+describe("escalation routing", () => {
+  it("detects refund, human and structural-change requests deterministically", () => {
+    expect(escalationRequested("I demand a refund")).toBe("Refund request");
+    expect(escalationRequested("Connect me to a manager")).toBe("Human handoff");
+    expect(escalationRequested("I want to speak with a real person")).toBe("Human handoff");
+    expect(escalationRequested("Switch me to annual billing")).toBe("Structural change");
+    expect(escalationRequested("My lawyer will review this")).toBe("Legal escalation");
+  });
+  it("does not escalate ordinary price complaints", () => {
+    expect(escalationRequested("It is too expensive for me right now")).toBeNull();
+    expect(escalationRequested("")).toBeNull();
+  });
+  it("escalation decisions carry no offer and keep cancellation open", () => {
+    const d = escalateDecision("Refund request");
+    expect(d.status).toBe("escalated");
+    expect(d.offer).toBeNull();
+    expect(d.message.toLowerCase()).toContain("cancel");
+    expect(d.violations).toEqual([]);
+  });
+  it("a proposal marked escalate is escalated even if it contains a valid discount", () => {
+    const d = enforcePolicy(policy, p(disc(10), { escalate: true }), ctx);
+    expect(d.status).toBe("escalated");
+    expect(d.offer).toBeNull();
+    expect(d.message.toLowerCase()).toContain("cancel");
   });
 });

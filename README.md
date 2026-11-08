@@ -39,7 +39,7 @@ engineering a custom retention stack.
   Firestore Security Rules keep every merchant's data inside their own
   workspace.
 - **Notifications** — Slack approval alerts, Resend outcome emails (only after
-  PayPal-verified results), ElevenLabs voice playback of offers, PostHog
+  PayPal-verified results), local Kokoro TTS voice playback of offers, PostHog
   server-side analytics events.
 
 ## How the retention workflow works
@@ -72,7 +72,7 @@ engineering a custom retention stack.
   Firestore REST API
 - **Payments:** PayPal Subscriptions API (Sandbox)
 - **AI:** Firecrawl (scraping), Groq (offer generation)
-- **Operations:** Slack, Resend, ElevenLabs, PostHog, Inngest
+- **Operations:** Slack, Resend, local Kokoro TTS, PostHog, Inngest
 
 ```text
 Browser (React)                Server functions / routes              External
@@ -82,7 +82,7 @@ Firestore listeners      ◀──   resolve merchant from merchantUsers    Fire
 Dashboard / portal       ──▶   policy engine + HMAC-signed offers     Groq, Firecrawl
                                idempotency claim                      PayPal Sandbox
                                pause/cancel + PayPal status re-read   Slack, Resend,
-                               best-effort notifications              ElevenLabs, PostHog
+                               best-effort notifications              Kokoro TTS, PostHog
                                durable approval workflow              Inngest
 ```
 
@@ -113,7 +113,7 @@ src/
     retention/                Firecrawl/Groq providers, policy guardrails, offers
     paypal/                   PayPal API client, authorization, journey logic
     records/                  Firestore persistence, approvals, invitations
-    notify/                   Slack/Resend/PostHog/ElevenLabs + Inngest workflows
+    notify/                   Slack/Resend/PostHog/Kokoro TTS + Inngest workflows
     dashboard/                Metrics model (pure), workspace provider, tables
   test/                       Vitest suites (unit, routing, rules emulator)
 functions/                    Optional, undeployed Firebase Cloud Functions
@@ -127,7 +127,7 @@ FIREBASE_SETUP.md             Firebase configuration and rules deployment guide
 - Node.js 20+ (or Bun)
 - A Firebase project with Google sign-in enabled and a Firestore database
 - A PayPal Sandbox REST app and subscription plan
-- Optional: Firecrawl, Groq, Slack, Resend, Inngest, ElevenLabs, PostHog keys
+- Optional: Firecrawl, Groq, Slack, Resend, Inngest, PostHog keys (voice uses local Kokoro)
 - Java 21+ (only for running the Firestore rules emulator tests)
 
 ## Local installation
@@ -153,7 +153,7 @@ variable with placeholders only. Summary:
 - `RETAIN_SIGNING_SECRET` — HMAC secret signing AI offers
 - `MERCHANT_SIGNUP_ALLOWLIST` — emails/domains allowed to create a workspace
 - `SLACK_APPROVAL_CHANNEL`, `RESEND_FROM`, `INNGEST_SIGNING_KEY`,
-  `ELEVENLABS_API_KEY`, `POSTHOG_API_KEY`, `POSTHOG_REGION` — notifications
+  `POSTHOG_API_KEY`, `POSTHOG_REGION` — notifications
 - `LOVABLE_API_KEY` — Lovable connector gateway key (only when hosted on
   Lovable; see "Deployment" below)
 
@@ -201,8 +201,8 @@ those go through authenticated server functions only.
   refuses to serve without the signing key.
 - **Resend:** verify a sending domain and set `RESEND_FROM`. The Resend test
   sender only delivers to the Resend account owner.
-- **ElevenLabs:** set `ELEVENLABS_API_KEY`; the portal shows a Listen button
-  on offers.
+- **Kokoro TTS:** runs locally (open-source model, no key); the portal shows a
+  Listen button on offers and the server caches the model after the first call.
 - **PostHog:** set `POSTHOG_API_KEY` and `POSTHOG_REGION` (`us` or `eu`).
 
 ## Local development commands
@@ -257,14 +257,13 @@ Steps:
      `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`, `PAYPAL_PLAN_ID`,
      `FIRECRAWL_API_KEY`, `GROQ_API_KEY`, `RETAIN_SIGNING_SECRET`,
      `MERCHANT_SIGNUP_ALLOWLIST`, `SLACK_APPROVAL_CHANNEL`, `RESEND_FROM`,
-     `INNGEST_SIGNING_KEY`, `ELEVENLABS_API_KEY`,
-     `POSTHOG_API_KEY`, `POSTHOG_REGION`.
+     `INNGEST_SIGNING_KEY`, `POSTHOG_API_KEY`, `POSTHOG_REGION`.
    - Firecrawl, Slack, Resend and Inngest event sending call the Lovable
      connector gateway and need `LOVABLE_API_KEY` plus `FIRECRAWL_API_KEY`,
      `SLACK_API_KEY`, `RESEND_API_KEY`, `INNGEST_API_KEY`. Lovable issues
      these inside its platform; outside Lovable they must be provided or the
      calls rewired to each provider's own API — **main blocker**. Groq,
-     ElevenLabs, PostHog and PayPal call their providers directly.
+     PostHog and PayPal call their providers directly; Kokoro TTS runs locally.
 3. Firebase Console → Authentication → Settings → Authorized domains: add the
    Vercel domain(s) (`<project>.vercel.app` and any custom domain). Sign-in
    is popup-based, so no extra OAuth redirect URI is needed beyond the

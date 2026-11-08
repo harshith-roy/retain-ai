@@ -100,7 +100,7 @@ export const fetchSubscription = createServerFn({ method: "POST" })
   });
 
 const DecisionShape = z.object({
-  status: z.enum(["offer", "needs_approval", "no_offer"]),
+  status: z.enum(["offer", "needs_approval", "escalated", "no_offer"]),
   offer: z.any().nullable(),
   message: z.string(),
   rationale: z.string(),

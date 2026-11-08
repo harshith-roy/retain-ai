@@ -7,6 +7,8 @@ import {
   PolicySchema,
   RETENTION_SYSTEM_PROMPT,
   enforcePolicy,
+  escalateDecision,
+  escalationRequested,
   fenceUntrusted,
   parseProposal,
   type BrandProfile,
@@ -130,8 +132,10 @@ export const generateRetentionOffer = createServerFn({ method: "POST" })
           offersSoFar: data.previousOffers.length,
         };
         const policy = PolicySchema.safeParse(data.policy);
+        const escalation = escalationRequested(data.reasonDetail);
         let decision: Decision;
-        if (!policy.success || ctx.offersSoFar >= policy.data.maxOffers) {
+        if (escalation) decision = escalateDecision(escalation);
+        else if (!policy.success || ctx.offersSoFar >= policy.data.maxOffers) {
           decision = enforcePolicy(data.policy, null, ctx);
           if (policy.success)
             decision = enforcePolicy(
@@ -140,6 +144,7 @@ export const generateRetentionOffer = createServerFn({ method: "POST" })
                 message: "I understand. Thanks for giving us a chance to help.",
                 offer: null,
                 rationale: "",
+                escalate: false,
               },
               ctx,
             );
@@ -189,6 +194,8 @@ async function decide(
   monthlyPrice: number,
 ): Promise<Decision> {
   const ctx = { offersSoFar };
+  const escalation = escalationRequested(data.reasonDetail);
+  if (escalation) return escalateDecision(escalation);
   const policy = PolicySchema.safeParse(policyInput);
   if (!policy.success) return enforcePolicy(policyInput, null, ctx);
   if (offersSoFar >= policy.data.maxOffers)
@@ -198,6 +205,7 @@ async function decide(
         message: "I understand. Thanks for giving us a chance to help.",
         offer: null,
         rationale: "",
+        escalate: false,
       },
       ctx,
     );

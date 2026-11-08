@@ -62,12 +62,12 @@ const ITEMS: {
     note: "Live website analysis verified from the server; not yet through a signed-in browser session.",
   },
   {
-    name: "ElevenLabs",
-    purpose: "Voice retention agent",
+    name: "Kokoro TTS",
+    purpose: "Voice retention agent (local, open source)",
     credentials: true,
     implemented: true,
     verified: false,
-    note: "Customers can listen to the retention message in the portal. Voice generation tested; full portal journey not yet run.",
+    note: "Customers can listen to the retention message in the portal. Speech is generated on the server with the open-source Kokoro-82M model — no third-party voice API or key. Full portal journey not yet run.",
   },
   {
     name: "Slack",
