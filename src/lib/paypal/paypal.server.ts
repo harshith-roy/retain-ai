@@ -206,15 +206,17 @@ export interface RevisionResult {
   price: string;
   currency: string;
   originalPrice: string;
+  /** Offered duration kept for merchant records; the override itself is permanent. */
   durationMonths: number;
   effectiveAt: string | null;
 }
 
 /**
- * Revise an existing subscription by overriding its billing cycles, so no new
- * PayPal plan has to be created at runtime. PayPal allows only one REGULAR
- * cycle, so the discounted period is a finite TRIAL cycle (sequence 1) and the
- * original price resumes as the infinite REGULAR cycle (sequence 2).
+ * Revise an existing subscription's recurring price. PayPal rejects overrides
+ * whose cycle structure differs from the subscription's plan (422), so this
+ * mirrors the base plan exactly: one infinite REGULAR cycle (sequence 1) that
+ * carries the discounted price. The discount therefore replaces the recurring
+ * price instead of adding a TRIAL cycle the plan never had.
  */
 export async function reviseSubscription(
   id: string,
@@ -247,18 +249,9 @@ export async function reviseSubscription(
         billing_cycles: [
           {
             sequence: 1,
-            tenure_type: "TRIAL",
-            frequency: regular.frequency,
-            pricing_scheme: { fixed_price: { value, currency_code: currency } },
-            total_cycles: months,
-          },
-          {
-            sequence: 2,
             tenure_type: "REGULAR",
             frequency: regular.frequency,
-            pricing_scheme: {
-              fixed_price: { value: originalPrice, currency_code: currency },
-            },
+            pricing_scheme: { fixed_price: { value, currency_code: currency } },
             total_cycles: 0,
           },
         ],

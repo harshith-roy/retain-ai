@@ -188,7 +188,7 @@ export function verifyRevision(
       !!fixed &&
       fixed.currency_code === expected.currency &&
       Number(fixed.value) === Number(expected.price) &&
-      (c.total_cycles == null || c.total_cycles === expected.durationMonths)
+      (c.total_cycles == null || c.total_cycles === 0 || c.total_cycles === expected.durationMonths)
     );
   });
   if (!discounted)
@@ -202,7 +202,7 @@ export function verifyRevision(
   return {
     verified: true,
     effectivePrice: Number(expected.price),
-    reason: `PayPal confirms ACTIVE at ${expected.currency} ${expected.price}/month for ${expected.durationMonths} month(s), then the original price.`,
+    reason: `PayPal confirms ACTIVE at ${expected.currency} ${expected.price}/month as the subscription's recurring price.`,
   };
 }
 

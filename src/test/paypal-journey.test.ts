@@ -177,15 +177,9 @@ describe("revision verification", () => {
         billing_cycles: [
           {
             sequence: 1,
-            tenure_type: "TRIAL",
-            total_cycles: 3,
-            pricing_scheme: { fixed_price: { value: discountedPrice, currency_code: "USD" } },
-          },
-          {
-            sequence: 2,
             tenure_type: "REGULAR",
             total_cycles: 0,
-            pricing_scheme: { fixed_price: { value: "50.00", currency_code: "USD" } },
+            pricing_scheme: { fixed_price: { value: discountedPrice, currency_code: "USD" } },
           },
         ],
       },

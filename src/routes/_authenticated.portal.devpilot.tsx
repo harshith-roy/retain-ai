@@ -539,13 +539,13 @@ function Portal() {
                 </div>
                 <p className="mt-1 text-xs text-muted-foreground">
                   {label(d.offer.type)}
-                  {d.offer.discountPct ? ` · ${d.offer.discountPct}% off` : ""} ·{" "}
-                  {d.offer.durationMonths} month(s)
+                  {d.offer.discountPct ? ` · ${d.offer.discountPct}% off` : ""}
+                  {d.offer.type === "discount" ? "" : ` · ${d.offer.durationMonths} month(s)`}
                 </p>
                 {d.offer.type === "discount" && (
                   <p className="mt-2 text-xs text-muted-foreground">
-                    Accepting applies this price to your PayPal subscription. PayPal may ask you to
-                    approve the new price before it starts.
+                    Accepting applies this price as your PayPal subscription's recurring price.
+                    PayPal may ask you to approve the new price before it starts.
                   </p>
                 )}
                 {(d.offer.type === "downgrade" || d.offer.type === "skip_month") && (

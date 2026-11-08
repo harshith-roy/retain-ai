@@ -271,7 +271,7 @@ export const recordCustomerDecision = createServerFn({ method: "POST" })
               ? "PayPal confirms your subscription is cancelled. You won't be billed again."
               : paused
                 ? "PayPal confirms your subscription is paused. You won't be billed while it's paused."
-                : `PayPal confirms your new price is $${result.verifiedPrice?.toFixed(2) ?? "discounted"}/month for ${months} month(s). Your original price returns after that.`,
+                : `PayPal confirms your new recurring price is $${result.verifiedPrice?.toFixed(2) ?? "discounted"}/month.`,
           ),
           `outcome-${data.actionId}`,
         );
@@ -489,7 +489,7 @@ async function execute(
         ok: true as const,
         executed: true,
         outcome: "awaiting_customer_approval" as const,
-        reason: `PayPal needs you to approve ${revision.currency} ${revision.price}/month for ${revision.durationMonths} month(s) before the discount applies.`,
+        reason: `PayPal needs you to approve ${revision.currency} ${revision.price}/month as your new recurring price.`,
         statusBefore: before,
         verifiedStatus: after?.status ?? before,
         verified: false,
